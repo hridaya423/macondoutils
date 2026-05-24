@@ -5,6 +5,7 @@ Quality-of-life browser extension for Macondo.
 ## Features
 
 - Replaces shop item time estimates with accurate project-based estimates.
+- Easier one-step project creation
 
 ## Installation
 
