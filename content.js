@@ -25,6 +25,22 @@
   const DEBUG_PREFIX = "[Macondo Utils]";
   const IS_HARVEST_TAB = new URLSearchParams(window.location.search).has("macondo_utils_harvest");
   const ALLOW_VISIBLE_FALLBACK_HARVEST = false;
+  const CREATE_MODAL_ID = "macondo-utils-create-modal";
+  const CREATE_STYLE_ID = "macondo-utils-create-style";
+  const LEVEL_META = {
+    software: {
+      1: { name: "L1 Beginner", goldPerHour: 40, fruit: "Mango", fruitIcon: "/images/fruits/mango/icon.webp", desc: "A first ship: simple site, script, or tiny tool." },
+      2: { name: "L2 Intermediate", goldPerHour: 45, fruit: "Pineapple", fruitIcon: "/images/fruits/pineapple/icon.webp", desc: "A focused app, CLI, or game with clean polish." },
+      3: { name: "L3 Advanced", goldPerHour: 50, fruit: "Papaya", fruitIcon: "/images/fruits/papaya/icon_interior.webp", desc: "Multiple systems together: backend, state, infra." },
+      4: { name: "L4 Expert", goldPerHour: 60, fruit: "Cocoa", fruitIcon: "/images/fruits/cocoa/icon_interior.webp", desc: "Deep systems work: complex architecture, serious scope." }
+    },
+    hardware: {
+      1: { name: "L1 Beginner", goldPerHour: 40, fruit: "Guava", fruitIcon: "/images/fruits/guava/icon_interior.webp", desc: "First physical build with documented progress." },
+      2: { name: "L2 Intermediate", goldPerHour: 45, fruit: "Coconut", fruitIcon: "/images/fruits/coco/icon_interior.webp", desc: "Solid prototype with wiring and iteration." },
+      3: { name: "L3 Advanced", goldPerHour: 50, fruit: "Watermelon", fruitIcon: "/images/fruits/watermelon/icon_interior.webp", desc: "Complex integration: sensors, logic, enclosure." },
+      4: { name: "L4 Expert", goldPerHour: 60, fruit: "Avocado", fruitIcon: "/images/fruits/avocado/icon_interior.webp", desc: "High complexity build with major technical depth." }
+    }
+  };
 
   function parseFloatSafe(text) {
     const n = Number.parseFloat(String(text).replace(/[^0-9.]/g, ""));
@@ -310,6 +326,629 @@
     return Math.max(1000, next.getTime() - now.getTime());
   }
 
+  function ensureCreateModalStyle() {
+    if (document.getElementById(CREATE_STYLE_ID)) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = CREATE_STYLE_ID;
+    style.textContent = [
+      `#${CREATE_MODAL_ID}{position:fixed;inset:0;z-index:999999;display:flex;align-items:center;justify-content:center;background:rgba(28,20,10,.5);}`,
+      `#${CREATE_MODAL_ID} *{box-sizing:border-box;}`,
+      `#${CREATE_MODAL_ID} .mu-card{width:min(700px,94vw);max-height:94vh;overflow:auto;background:#e8d2b4;border:3px solid #6b4f2a;padding:16px 16px 14px;color:#5a3e23;font-family:ui-sans-serif,system-ui,sans-serif;}`,
+      `#${CREATE_MODAL_ID} .mu-card{position:relative;box-shadow:0 24px 60px rgba(0,0,0,.35);padding:22px 24px 20px;}`,
+      `#${CREATE_MODAL_ID} .mu-paper{display:none;}`,
+      `#${CREATE_MODAL_ID} .mu-inner{position:relative;z-index:3;}`,
+      `#${CREATE_MODAL_ID} h2{margin:0;font-size:36px;line-height:1.05;letter-spacing:-0.02em;font-weight:900;}`,
+      `#${CREATE_MODAL_ID} .mu-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;}`,
+      `#${CREATE_MODAL_ID} .mu-x{border:3px solid #8c6a43;background:#d8bc98;color:#6d4d2c;font-size:19px;cursor:pointer;line-height:1;padding:4px 8px;box-shadow:inset 0 0 0 2px #ead6b9;}`,
+      `#${CREATE_MODAL_ID} .mu-x:hover{background:#cfae83;}`,
+      `#${CREATE_MODAL_ID} .mu-hr{height:8px;background:#d4b894;margin:0 0 10px;}`,
+      `#${CREATE_MODAL_ID} .mu-grid{display:grid;grid-template-columns:1fr;gap:10px;}`,
+      `#${CREATE_MODAL_ID} label{font-size:14px;font-weight:800;display:block;margin:0 0 6px;}`,
+      `#${CREATE_MODAL_ID} input,#${CREATE_MODAL_ID} textarea,#${CREATE_MODAL_ID} select{width:100%;border:2px solid #7a5a34;background:#fff8eb;padding:8px 10px;color:#4d341e;}`,
+      `#${CREATE_MODAL_ID} textarea{min-height:98px;resize:vertical;padding:10px 16px 30px 12px;}`,
+      `#${CREATE_MODAL_ID} .mu-mini-textarea{min-height:64px;padding:8px 10px;}`,
+      `#${CREATE_MODAL_ID} .mu-textarea-wrap{position:relative;}`,
+      `#${CREATE_MODAL_ID} .mu-textarea-hint{position:absolute;right:16px;bottom:10px;font-size:11px;opacity:.75;pointer-events:none;}`,
+      `#${CREATE_MODAL_ID} .mu-row{margin-bottom:8px;}`,
+      `#${CREATE_MODAL_ID} .mu-levels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}`,
+      `#${CREATE_MODAL_ID} .mu-level{border:2px solid #9b7a4f;background:#f9ebd5;padding:6px 7px;cursor:pointer;text-align:left;color:#5a3e23;}`,
+      `#${CREATE_MODAL_ID} .mu-level[data-active='true']{border-color:#5a3e23;background:#e7d0ab;box-shadow:inset 0 0 0 1px rgba(90,62,35,.35);}`,
+      `#${CREATE_MODAL_ID} .mu-l-top{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:2px;}`,
+      `#${CREATE_MODAL_ID} .mu-l-title{font-size:12px;font-weight:800;}`,
+      `#${CREATE_MODAL_ID} .mu-l-rate{font-size:10px;font-weight:800;opacity:.85;}`,
+      `#${CREATE_MODAL_ID} .mu-l-mid{display:flex;align-items:flex-start;gap:6px;margin-bottom:0;}`,
+      `#${CREATE_MODAL_ID} .mu-l-mid img{width:14px;height:14px;object-fit:contain;margin-top:1px;}`,
+      `#${CREATE_MODAL_ID} .mu-l-desc{font-size:10px;line-height:1.15;opacity:.82;}`,
+      `#${CREATE_MODAL_ID} .mu-type-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;}`,
+      `#${CREATE_MODAL_ID} .mu-type{border:2px solid #9b7a4f;background:#f9ebd5;padding:8px;cursor:pointer;text-align:left;display:flex;gap:8px;align-items:center;}`,
+      `#${CREATE_MODAL_ID} .mu-type[data-active='true']{border-color:#5a3e23;background:#e7d0ab;}`,
+      `#${CREATE_MODAL_ID} .mu-type img{width:34px;height:34px;object-fit:contain;}`,
+      `#${CREATE_MODAL_ID} .mu-type-title{font-size:14px;font-weight:700;line-height:1.1;}`,
+      `#${CREATE_MODAL_ID} .mu-type-sub{font-size:11px;opacity:.8;line-height:1.1;}`,
+      `#${CREATE_MODAL_ID} .mu-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;}`,
+      `#${CREATE_MODAL_ID} .mu-btn{border:3px solid #6b4f2a;background:#6b4f2a;color:#f7e8cf;padding:10px 14px;cursor:pointer;font-weight:800;font-size:16px;}`,
+      `#${CREATE_MODAL_ID} .mu-btn.alt{background:#efe0c7;color:#6b4f2a;}`,
+      `#${CREATE_MODAL_ID} .mu-btn[disabled]{opacity:.6;cursor:wait;}`,
+      `#${CREATE_MODAL_ID} .mu-help{font-size:11px;opacity:.8;margin-top:4px;}`,
+      `#${CREATE_MODAL_ID} .mu-help.right{text-align:right;}`,
+      `#${CREATE_MODAL_ID} .mu-error{font-size:12px;color:#8f1f1f;min-height:16px;margin-top:2px;}`,
+      `#${CREATE_MODAL_ID} .mu-mini-check{display:inline-flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;font-weight:800;}`,
+      `#${CREATE_MODAL_ID} .mu-mini-check input{width:16px;height:16px;accent-color:#6b4f2a;cursor:pointer;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-row{position:relative;display:flex;align-items:center;gap:8px;min-height:46px;border:2px solid #7a5a34;background:#fff8eb;padding:6px 10px;overflow:hidden;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-row[data-has-image='true']{background-size:cover;background-position:center;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-overlay{position:absolute;inset:0;background:rgba(255,248,235,.78);pointer-events:none;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-control{position:relative;z-index:1;display:flex;align-items:center;gap:8px;min-width:0;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-trigger{border:2px solid #7a5a34;background:#efe0c7;color:#5a3e23;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-filename{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-status{margin-left:auto;position:relative;z-index:1;font-size:11px;opacity:.8;}`,
+      `#${CREATE_MODAL_ID} .mu-upload-note{font-size:11px;opacity:.75;margin-top:4px;}`,
+      `#${CREATE_MODAL_ID} .mu-hidden{display:none;}`,
+      `#${CREATE_MODAL_ID} .mu-pills{display:flex;flex-wrap:wrap;gap:6px;max-height:132px;overflow:auto;padding:2px 0;}`,
+      `#${CREATE_MODAL_ID} .mu-pill{display:inline-flex;align-items:center;justify-content:flex-start;border:2px solid #9b7a4f;background:#f9ebd5;color:#5a3e23;padding:4px 8px;font-size:11px;cursor:pointer;gap:0;max-width:100%;}`,
+      `#${CREATE_MODAL_ID} .mu-pill[data-active='true']{border-color:#5a3e23;background:#e7d0ab;font-weight:700;}`,
+      `#${CREATE_MODAL_ID} .mu-pill-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}`,
+      `#${CREATE_MODAL_ID} .mu-pill-more{display:inline-flex;align-items:center;border:2px dashed #9b7a4f;background:#efdebf;color:#6c5031;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;}`,
+      `#${CREATE_MODAL_ID} .mu-split{display:grid;grid-template-columns:1fr 1fr;gap:10px;}`,
+      "@media (max-width: 700px){#" + CREATE_MODAL_ID + " .mu-card{padding:16px 14px 14px;}#" + CREATE_MODAL_ID + " h2{font-size:30px;}#" + CREATE_MODAL_ID + " .mu-levels{grid-template-columns:1fr;}#" + CREATE_MODAL_ID + " .mu-split{grid-template-columns:1fr;gap:8px;}}"
+    ].join("");
+    document.head.appendChild(style);
+  }
+
+  function onCreateEscape(event) {
+    if (event.key === "Escape") {
+      removeCreateModal();
+    }
+  }
+
+  function removeCreateModal() {
+    const root = document.getElementById(CREATE_MODAL_ID);
+    if (root) {
+      root.remove();
+    }
+    document.removeEventListener("keydown", onCreateEscape, true);
+  }
+
+  async function submitCreateProject(payload, optionalPayload, errorNode, submitBtn) {
+    errorNode.textContent = "";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Creating...";
+
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        let message = `Request failed (${response.status})`;
+        try {
+          const body = await response.json();
+          if (body?.error) {
+            message = body.error;
+          }
+        } catch (_err) {}
+        throw new Error(message);
+      }
+
+      let createdProject = null;
+      try {
+        createdProject = await response.json();
+      } catch (_err) {}
+
+      const projectId = createdProject?.id;
+      const patchBody = {};
+      if (optionalPayload?.repositoryUrl) {
+        patchBody.repositoryUrl = optionalPayload.repositoryUrl;
+      }
+      if (optionalPayload?.demoUrl) {
+        patchBody.demoUrl = optionalPayload.demoUrl;
+      }
+      if (optionalPayload?.thumbnailUrl) {
+        patchBody.thumbnailUrl = optionalPayload.thumbnailUrl;
+      }
+      if (optionalPayload?.nextShipIsUpdate) {
+        patchBody.nextShipIsUpdate = true;
+      }
+      if (optionalPayload?.nextShipUpdateDescription) {
+        patchBody.next_ship_update_description = optionalPayload.nextShipUpdateDescription;
+      }
+      if (Array.isArray(optionalPayload?.hackatimeProjects) && optionalPayload.hackatimeProjects.length > 0) {
+        patchBody.hackatimeProjects = optionalPayload.hackatimeProjects;
+      }
+
+      if (projectId && Object.keys(patchBody).length > 0) {
+        const patchResponse = await fetch(`/api/projects/${projectId}`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(patchBody)
+        });
+        if (!patchResponse.ok) {
+          throw new Error(`Created project, but optional fields failed (${patchResponse.status})`);
+        }
+      }
+
+      removeCreateModal();
+      window.location.reload();
+    } catch (error) {
+      errorNode.textContent = error instanceof Error ? error.message : "Failed to create project";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Create Project";
+    }
+  }
+
+  async function fetchHackatimeProjects() {
+    const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const response = await fetch(`/api/hackatime/projects?since=${since}`, {
+      method: "GET",
+      credentials: "include"
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const data = await response.json();
+    if (!Array.isArray(data?.projects)) {
+      return [];
+    }
+    return data.projects
+      .filter((project) => typeof project?.name === "string" && project.name.trim().length > 0)
+      .sort((a, b) => Number(b.total_seconds_in_window || 0) - Number(a.total_seconds_in_window || 0))
+      .map((project) => ({
+        name: project.name.trim(),
+        seconds: Number(project.total_seconds_in_window || 0)
+      }));
+  }
+
+  async function uploadProjectImage(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/api/upload-image", {
+      method: "POST",
+      credentials: "include",
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error(`Image upload failed (${response.status})`);
+    }
+
+    const body = await response.json();
+    const url = body?.url || body?.file;
+    if (!url || typeof url !== "string") {
+      throw new Error("Image upload did not return a URL");
+    }
+    return url;
+  }
+
+  function formatSecondsToHM(seconds) {
+    const totalMinutes = Math.max(0, Math.round(Number(seconds || 0) / 60));
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (h <= 0) {
+      return `${m}m`;
+    }
+    if (m === 0) {
+      return `${h}h`;
+    }
+    return `${h}h ${m}m`;
+  }
+
+  function isLikelyUrl(value) {
+    if (!value) {
+      return true;
+    }
+    return /^https?:\/\//i.test(value);
+  }
+
+  function openCreateProjectModal() {
+    if (document.getElementById(CREATE_MODAL_ID)) {
+      return;
+    }
+
+    ensureCreateModalStyle();
+
+    const root = document.createElement("div");
+    root.id = CREATE_MODAL_ID;
+    root.innerHTML = `
+      <div class="mu-card" role="dialog" aria-modal="true" aria-label="Create Project">
+        <div class="mu-paper"></div>
+        <div class="mu-inner">
+        <div class="mu-top">
+          <div><h2>New Project</h2></div>
+          <button class="mu-x" type="button" aria-label="Close">✕</button>
+        </div>
+        <div class="mu-hr"></div>
+        <div class="mu-row">
+          <label for="mu-name">Project Name</label>
+          <input id="mu-name" maxlength="50" placeholder="My Awesome Project" />
+        </div>
+        <div class="mu-row">
+          <label for="mu-desc">Description</label>
+          <div class="mu-textarea-wrap">
+            <textarea id="mu-desc" maxlength="1000" placeholder="Describe your project idea..."></textarea>
+            <span class="mu-textarea-hint" id="mu-desc-counter">Min 0/20</span>
+          </div>
+        </div>
+        <div class="mu-row">
+          <label class="mu-mini-check" for="mu-next-ship-update">
+            <input id="mu-next-ship-update" type="checkbox" />
+            <span>This project is a update</span>
+          </label>
+        </div>
+        <div class="mu-row mu-hidden" id="mu-next-ship-update-row">
+          <label for="mu-next-ship-update-desc">What changed since last ship?</label>
+          <textarea class="mu-mini-textarea" id="mu-next-ship-update-desc" maxlength="500" placeholder="Describe the improvements, fixes, or new features."></textarea>
+        </div>
+        <div class="mu-grid">
+          <div class="mu-row">
+            <label>Project Type</label>
+            <div class="mu-type-cards" id="mu-type-cards">
+              <button type="button" class="mu-type" data-type="software" data-active="true">
+                <img src="/images/orpheus/orpheus_coding.webp" alt="Software">
+                <span>
+                  <span class="mu-type-title">Software</span>
+                  <span class="mu-type-sub">Websites, apps, tools</span>
+                </span>
+              </button>
+              <button type="button" class="mu-type" data-type="hardware" data-active="false">
+                <img src="/images/orpheus/orpheus_solding.webp" alt="Hardware">
+                <span>
+                  <span class="mu-type-title">Hardware</span>
+                  <span class="mu-type-sub">Circuits, devices, robots</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="mu-row">
+          <label>Complexity Level</label>
+          <div class="mu-levels" id="mu-levels"></div>
+        </div>
+        <div class="mu-error" id="mu-error"></div>
+        <div class="mu-row">
+          <div class="mu-split">
+            <div>
+              <label for="mu-repo">GitHub URL (optional)</label>
+              <input id="mu-repo" placeholder="https://github.com/user/repo" />
+            </div>
+            <div>
+              <label for="mu-demo">Demo URL (optional)</label>
+              <input id="mu-demo" placeholder="https://your-demo-site.com" />
+            </div>
+          </div>
+        </div>
+        <div class="mu-row">
+          <label>Hackatime Projects (optional)</label>
+          <div class="mu-pills" id="mu-hackatime-pills">
+            <span class="mu-help">Loading projects...</span>
+          </div>
+        </div>
+        <div class="mu-row">
+          <label for="mu-thumb-file">Thumbnail Image (optional)</label>
+          <div class="mu-upload-row" tabindex="0">
+            <div class="mu-upload-overlay" aria-hidden="true"></div>
+            <div class="mu-upload-control">
+              <input id="mu-thumb-file" type="file" accept="image/*" class="mu-hidden" />
+              <button type="button" class="mu-upload-trigger" id="mu-thumb-trigger">Choose image</button>
+              <span class="mu-upload-filename" id="mu-thumb-filename">No image selected</span>
+            </div>
+            <span class="mu-upload-status" id="mu-thumb-status">Ready</span>
+          </div>
+          <div class="mu-upload-note">You can also paste an image from clipboard.</div>
+        </div>
+        <div class="mu-actions">
+          <button class="mu-btn alt" type="button" id="mu-cancel">Cancel</button>
+          <button class="mu-btn" type="button" id="mu-submit">Create Project</button>
+        </div>
+        </div>
+      </div>
+    `;
+
+    root.addEventListener("click", (event) => {
+      if (event.target === root) {
+        removeCreateModal();
+      }
+    });
+
+    const closeBtn = root.querySelector(".mu-x");
+    const cancelBtn = root.querySelector("#mu-cancel");
+    const submitBtn = root.querySelector("#mu-submit");
+    const errorNode = root.querySelector("#mu-error");
+    const nameInput = root.querySelector("#mu-name");
+    const descInput = root.querySelector("#mu-desc");
+    const descCounter = root.querySelector("#mu-desc-counter");
+    const repoInput = root.querySelector("#mu-repo");
+    const demoInput = root.querySelector("#mu-demo");
+    const thumbFileInput = root.querySelector("#mu-thumb-file");
+    const thumbTrigger = root.querySelector("#mu-thumb-trigger");
+    const thumbFilename = root.querySelector("#mu-thumb-filename");
+    const thumbStatus = root.querySelector("#mu-thumb-status");
+    const thumbUploadRow = root.querySelector(".mu-upload-row");
+    const nextShipUpdateCheckbox = root.querySelector("#mu-next-ship-update");
+    const nextShipUpdateRow = root.querySelector("#mu-next-ship-update-row");
+    const nextShipUpdateDescInput = root.querySelector("#mu-next-ship-update-desc");
+    const hackatimePillsRoot = root.querySelector("#mu-hackatime-pills");
+    const typeButtons = Array.from(root.querySelectorAll(".mu-type"));
+    const levelsRoot = root.querySelector("#mu-levels");
+    let selectedLevel = 1;
+    let selectedType = "software";
+    let uploadedThumbnailUrl = "";
+    const selectedHackatimeProjects = new Set();
+
+    const updateDescriptionCounter = () => {
+      const length = String(descInput.value || "").trim().length;
+      descCounter.textContent = `Min ${Math.min(length, 20)}/20`;
+    };
+    descInput.addEventListener("input", updateDescriptionCounter);
+    updateDescriptionCounter();
+
+    const updateNextShipVisibility = () => {
+      const isUpdate = Boolean(nextShipUpdateCheckbox.checked);
+      nextShipUpdateRow.classList.toggle("mu-hidden", !isUpdate);
+    };
+
+    nextShipUpdateCheckbox.addEventListener("change", updateNextShipVisibility);
+    updateNextShipVisibility();
+
+    const setThumbnailPreview = (url) => {
+      if (!url) {
+        thumbUploadRow.style.backgroundImage = "none";
+        thumbUploadRow.setAttribute("data-has-image", "false");
+        return;
+      }
+      const safeUrl = String(url).replace(/"/g, "\\\"");
+      thumbUploadRow.style.backgroundImage = `url("${safeUrl}")`;
+      thumbUploadRow.setAttribute("data-has-image", "true");
+    };
+
+    thumbTrigger.addEventListener("click", () => {
+      thumbFileInput.click();
+    });
+
+    thumbFileInput.addEventListener("change", async () => {
+      const file = thumbFileInput.files && thumbFileInput.files[0];
+      uploadedThumbnailUrl = "";
+      if (!file) {
+        thumbFilename.textContent = "No image selected";
+        thumbStatus.textContent = "Ready";
+        setThumbnailPreview("");
+        return;
+      }
+      thumbFilename.textContent = file.name || "pasted-image.png";
+      try {
+        thumbStatus.textContent = "Uploading...";
+        uploadedThumbnailUrl = await uploadProjectImage(file);
+        thumbStatus.textContent = "Uploaded";
+        setThumbnailPreview(uploadedThumbnailUrl);
+      } catch (_error) {
+        thumbStatus.textContent = "Upload failed";
+        setThumbnailPreview("");
+      }
+    });
+
+    const handleThumbnailPaste = async (event) => {
+      const items = event.clipboardData?.items;
+      if (!items || !items.length) {
+        return;
+      }
+      const imageItem = Array.from(items).find((item) => item.type && item.type.startsWith("image/"));
+      if (!imageItem) {
+        return;
+      }
+      event.preventDefault();
+      const file = imageItem.getAsFile();
+      if (!file) {
+        return;
+      }
+      try {
+        thumbStatus.textContent = "Uploading pasted image...";
+        thumbFilename.textContent = file.name || "pasted-image.png";
+        uploadedThumbnailUrl = await uploadProjectImage(file);
+        thumbStatus.textContent = "Pasted image uploaded";
+        setThumbnailPreview(uploadedThumbnailUrl);
+      } catch (_error) {
+        thumbStatus.textContent = "Upload failed";
+        setThumbnailPreview("");
+      }
+    };
+
+    thumbUploadRow.addEventListener("paste", handleThumbnailPaste);
+    root.addEventListener("paste", handleThumbnailPaste);
+
+    const renderLevelCards = () => {
+      const meta = LEVEL_META[selectedType] || LEVEL_META.software;
+      levelsRoot.innerHTML = "";
+      [1, 2, 3, 4].forEach((level) => {
+        const m = meta[level];
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "mu-level";
+        button.setAttribute("data-level", String(level));
+        button.setAttribute("data-active", selectedLevel === level ? "true" : "false");
+        button.innerHTML = `
+          <div class="mu-l-top">
+            <span class="mu-l-title">${m.name}</span>
+            <span class="mu-l-rate">${m.goldPerHour} gold/h</span>
+          </div>
+          <div class="mu-l-mid">
+            <img src="${m.fruitIcon}" alt="${m.fruit}">
+            <div class="mu-l-desc">${m.desc}</div>
+          </div>
+        `;
+        button.addEventListener("click", () => {
+          selectedLevel = level;
+          renderLevelCards();
+        });
+        levelsRoot.appendChild(button);
+      });
+    };
+
+    renderLevelCards();
+
+    (async () => {
+      try {
+        const projects = await fetchHackatimeProjects();
+        if (!projects.length) {
+          hackatimePillsRoot.innerHTML = `<span class="mu-help">No Hackatime projects found.</span>`;
+          return;
+        }
+        hackatimePillsRoot.innerHTML = "";
+        const DEFAULT_VISIBLE_COUNT = 5;
+        let expanded = false;
+        let visibleCount = Math.min(DEFAULT_VISIBLE_COUNT, projects.length);
+
+        const renderHackatimePills = () => {
+          hackatimePillsRoot.innerHTML = "";
+          const visibleProjects = projects.slice(0, visibleCount);
+
+          visibleProjects.forEach((project) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "mu-pill";
+            button.setAttribute("data-active", selectedHackatimeProjects.has(project.name) ? "true" : "false");
+            button.innerHTML = `<span class="mu-pill-text">${project.name}, ${formatSecondsToHM(project.seconds)}</span>`;
+            button.addEventListener("click", () => {
+              if (selectedHackatimeProjects.has(project.name)) {
+                selectedHackatimeProjects.delete(project.name);
+                button.setAttribute("data-active", "false");
+              } else {
+                selectedHackatimeProjects.add(project.name);
+                button.setAttribute("data-active", "true");
+              }
+            });
+            hackatimePillsRoot.appendChild(button);
+          });
+
+          const remainingCount = projects.length - visibleCount;
+          if (remainingCount > 0 || expanded) {
+            const moreChip = document.createElement("button");
+            moreChip.type = "button";
+            moreChip.className = "mu-pill-more";
+            moreChip.textContent = expanded ? "Show less" : `+${remainingCount} more`;
+            moreChip.addEventListener("click", () => {
+              expanded = !expanded;
+              visibleCount = expanded ? projects.length : Math.min(DEFAULT_VISIBLE_COUNT, projects.length);
+              renderHackatimePills();
+            });
+            hackatimePillsRoot.appendChild(moreChip);
+          }
+        };
+
+        renderHackatimePills();
+      } catch (_error) {
+        hackatimePillsRoot.innerHTML = `<span class="mu-help">Could not load Hackatime projects.</span>`;
+      }
+    })();
+
+    typeButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        selectedType = button.getAttribute("data-type") || "software";
+        typeButtons.forEach((b) => {
+          b.setAttribute("data-active", b === button ? "true" : "false");
+        });
+        renderLevelCards();
+      });
+    });
+
+    closeBtn.addEventListener("click", removeCreateModal);
+    cancelBtn.addEventListener("click", removeCreateModal);
+    submitBtn.addEventListener("click", async () => {
+      const name = String(nameInput.value || "").trim();
+      const description = String(descInput.value || "").trim();
+      const repositoryUrl = String(repoInput.value || "").trim();
+      const demoUrl = String(demoInput.value || "").trim();
+      const nextShipUpdateDescription = String(nextShipUpdateDescInput.value || "").trim();
+      const nextShipIsUpdate = Boolean(nextShipUpdateCheckbox.checked);
+      const type = selectedType;
+
+      if (!name) {
+        errorNode.textContent = "Project name is required.";
+        return;
+      }
+      if (description.length < 20) {
+        errorNode.textContent = "Description must be at least 20 characters.";
+        return;
+      }
+      if (type !== "software" && type !== "hardware") {
+        errorNode.textContent = "Project type is invalid.";
+        return;
+      }
+      if (![1, 2, 3, 4].includes(selectedLevel)) {
+        errorNode.textContent = "Project level is invalid.";
+        return;
+      }
+
+      if (!isLikelyUrl(repositoryUrl)) {
+        errorNode.textContent = "GitHub URL must start with http:// or https://";
+        return;
+      }
+      if (!isLikelyUrl(demoUrl)) {
+        errorNode.textContent = "Demo URL must start with http:// or https://";
+        return;
+      }
+
+      const selectedThumbFile = thumbFileInput.files && thumbFileInput.files[0];
+      if (selectedThumbFile && !uploadedThumbnailUrl) {
+        try {
+          thumbStatus.textContent = "Uploading...";
+          uploadedThumbnailUrl = await uploadProjectImage(selectedThumbFile);
+          thumbStatus.textContent = "Uploaded";
+        } catch (_error) {
+          errorNode.textContent = "Thumbnail upload failed.";
+          thumbStatus.textContent = "Upload failed";
+          return;
+        }
+      }
+
+      submitCreateProject(
+        { name, description, type, level: selectedLevel },
+        {
+          repositoryUrl,
+          demoUrl,
+          thumbnailUrl: uploadedThumbnailUrl,
+          nextShipIsUpdate,
+          nextShipUpdateDescription: nextShipIsUpdate ? nextShipUpdateDescription : "",
+          hackatimeProjects: Array.from(selectedHackatimeProjects)
+        },
+        errorNode,
+        submitBtn
+      );
+    });
+
+    document.body.appendChild(root);
+    nameInput.focus();
+    document.addEventListener("keydown", onCreateEscape, true);
+  }
+
+  function maybeInterceptCreateTileClick(event) {
+    if (IS_HARVEST_TAB) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+
+    const addTile = target.closest("#projects .farm-tile-add");
+    if (!addTile) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    openCreateProjectModal();
+  }
+
   function hasProjectContextOnPage() {
     return Boolean(document.querySelector("#projects .farm-tile-project")) || Boolean(document.querySelector("a[href*='/projects/']"));
   }
@@ -514,6 +1153,8 @@
   if (IS_HARVEST_TAB) {
     return;
   }
+
+  document.addEventListener("click", maybeInterceptCreateTileClick, true);
 
   updateShopCardHours();
   refreshEffectiveRate();
