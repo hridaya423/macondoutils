@@ -3,6 +3,12 @@
   "name": "Macondo Utils",
   "description": "Quality-of-life improvements for Macondo.",
   "version": "0.1.0",
+  "permissions": [
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "macondo-utils@hackclub.com",
