@@ -1,6 +1,6 @@
 # Macondo Utils
 
-Quality-of-life Chrome/Firefox extension for Macondo.
+Quality-of-life browser extension for Macondo.
 
 ## Features
 
