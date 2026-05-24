@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
 
     steps:
       - name: Checkout code
@@ -35,46 +36,36 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Deleting existing release v${VERSION}..."
             gh release delete "v${VERSION}" --yes
+            echo "Existing release deleted"
+          else
+            echo "No existing release found for v${VERSION}"
           fi
 
       - name: Build Chrome extension package
         run: |
+          echo "Building Chrome extension..."
           mkdir -p temp-chrome-extension
           cp manifest.json temp-chrome-extension/manifest.json
-
-          find . -maxdepth 1 -type f \
-            ! -name 'manifest.json' \
-            ! -name 'manifest_firefox.json' \
-            ! -name '.DS_Store' \
-            -exec cp {} temp-chrome-extension/ \;
-
-          find . -mindepth 1 -maxdepth 1 -type d \
-            ! -name '.git' \
-            ! -name '.github' \
-            -exec cp -R {} temp-chrome-extension/ \;
+          cp content.js temp-chrome-extension/
+          cp background.js temp-chrome-extension/
 
           (cd temp-chrome-extension && zip -r "../macondo-utils-chrome-v${VERSION}.zip" .)
           rm -rf temp-chrome-extension
+          echo "Chrome extension packaged: macondo-utils-chrome-v${VERSION}.zip"
 
       - name: Build Firefox extension package
         run: |
+          echo "Building Firefox extension..."
           mkdir -p temp-firefox-extension
           cp manifest_firefox.json temp-firefox-extension/manifest.json
-
-          find . -maxdepth 1 -type f \
-            ! -name 'manifest.json' \
-            ! -name 'manifest_firefox.json' \
-            ! -name '.DS_Store' \
-            -exec cp {} temp-firefox-extension/ \;
-
-          find . -mindepth 1 -maxdepth 1 -type d \
-            ! -name '.git' \
-            ! -name '.github' \
-            -exec cp -R {} temp-firefox-extension/ \;
+          cp content.js temp-firefox-extension/
+          cp background.js temp-firefox-extension/
 
           (cd temp-firefox-extension && zip -r "../macondo-utils-firefox-v${VERSION}.zip" .)
           rm -rf temp-firefox-extension
+          echo "Firefox extension packaged: macondo-utils-firefox-v${VERSION}.zip"
 
       - name: Upload Chrome extension artifact
         uses: actions/upload-artifact@v4
@@ -94,11 +85,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "Creating unified release v${VERSION}..."
           gh release create "v${VERSION}" \
             --title "Macondo Utils v${VERSION} - Chrome & Firefox" \
-            --generate-notes \
+            --notes-file README.md \
             "macondo-utils-chrome-v${VERSION}.zip" \
             "macondo-utils-firefox-v${VERSION}.zip"
+          echo "Release created successfully"
 
       - name: Summary
         run: |

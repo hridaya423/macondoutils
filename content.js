@@ -15,7 +15,7 @@
 
   const SHOP_CARD_SELECTOR = "[data-flip-id]";
   const PROJECT_CACHE_KEY = "macondo_utils_project_rates_v1";
-  const PROJECT_CACHE_TTL_MS = 15 * 60 * 1000;
+  const PROJECT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
   let effectiveGoldPerHour = null;
   let refreshInFlight = false;
