@@ -1,0 +1,424 @@
+#macondo-utils-create-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(28, 20, 10, 0.5);
+}
+
+#macondo-utils-create-modal * {
+  box-sizing: border-box;
+}
+
+#macondo-utils-create-modal .mu-card {
+  position: relative;
+  width: min(700px, 94vw);
+  max-height: 94vh;
+  overflow: auto;
+  background: #e8d2b4;
+  border: 3px solid #6b4f2a;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  padding: 22px 24px 20px;
+  color: #5a3e23;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+#macondo-utils-create-modal .mu-paper {
+  display: none;
+}
+
+#macondo-utils-create-modal .mu-inner {
+  position: relative;
+  z-index: 3;
+}
+
+#macondo-utils-create-modal h2 {
+  margin: 0;
+  font-size: 36px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  font-weight: 900;
+}
+
+#macondo-utils-create-modal .mu-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+#macondo-utils-create-modal .mu-x {
+  border: 3px solid #8c6a43;
+  background: #d8bc98;
+  color: #6d4d2c;
+  font-size: 19px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 4px 8px;
+  box-shadow: inset 0 0 0 2px #ead6b9;
+}
+
+#macondo-utils-create-modal .mu-x:hover {
+  background: #cfae83;
+}
+
+#macondo-utils-create-modal .mu-hr {
+  height: 8px;
+  background: #d4b894;
+  margin: 0 0 10px;
+}
+
+#macondo-utils-create-modal .mu-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+#macondo-utils-create-modal label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+#macondo-utils-create-modal input,
+#macondo-utils-create-modal textarea,
+#macondo-utils-create-modal select {
+  width: 100%;
+  border: 2px solid #7a5a34;
+  background: #fff8eb;
+  padding: 8px 10px;
+  color: #4d341e;
+}
+
+#macondo-utils-create-modal textarea {
+  min-height: 98px;
+  resize: vertical;
+  padding: 10px 16px 30px 12px;
+}
+
+#macondo-utils-create-modal .mu-mini-textarea {
+  min-height: 64px;
+  padding: 8px 10px;
+}
+
+#macondo-utils-create-modal .mu-textarea-wrap {
+  position: relative;
+}
+
+#macondo-utils-create-modal .mu-textarea-hint {
+  position: absolute;
+  right: 16px;
+  bottom: 10px;
+  font-size: 11px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+#macondo-utils-create-modal .mu-row {
+  margin-bottom: 8px;
+}
+
+#macondo-utils-create-modal .mu-levels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+#macondo-utils-create-modal .mu-level {
+  border: 2px solid #9b7a4f;
+  background: #f9ebd5;
+  padding: 6px 7px;
+  cursor: pointer;
+  text-align: left;
+  color: #5a3e23;
+}
+
+#macondo-utils-create-modal .mu-level[data-active='true'] {
+  border-color: #5a3e23;
+  background: #e7d0ab;
+  box-shadow: inset 0 0 0 1px rgba(90, 62, 35, 0.35);
+}
+
+#macondo-utils-create-modal .mu-l-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+#macondo-utils-create-modal .mu-l-title {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+#macondo-utils-create-modal .mu-l-rate {
+  font-size: 10px;
+  font-weight: 800;
+  opacity: 0.85;
+}
+
+#macondo-utils-create-modal .mu-l-mid {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+#macondo-utils-create-modal .mu-l-mid img {
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+  margin-top: 1px;
+}
+
+#macondo-utils-create-modal .mu-l-desc {
+  font-size: 10px;
+  line-height: 1.15;
+  opacity: 0.82;
+}
+
+#macondo-utils-create-modal .mu-type-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+#macondo-utils-create-modal .mu-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 2px solid #9b7a4f;
+  background: #f9ebd5;
+  padding: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+#macondo-utils-create-modal .mu-type[data-active='true'] {
+  border-color: #5a3e23;
+  background: #e7d0ab;
+}
+
+#macondo-utils-create-modal .mu-type img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+#macondo-utils-create-modal .mu-type-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+#macondo-utils-create-modal .mu-type-sub {
+  font-size: 11px;
+  opacity: 0.8;
+  line-height: 1.1;
+}
+
+#macondo-utils-create-modal .mu-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+#macondo-utils-create-modal .mu-btn {
+  border: 3px solid #6b4f2a;
+  background: #6b4f2a;
+  color: #f7e8cf;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+#macondo-utils-create-modal .mu-btn.alt {
+  background: #efe0c7;
+  color: #6b4f2a;
+}
+
+#macondo-utils-create-modal .mu-btn[disabled] {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+#macondo-utils-create-modal .mu-help {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+#macondo-utils-create-modal .mu-help.right {
+  text-align: right;
+}
+
+#macondo-utils-create-modal .mu-error {
+  min-height: 16px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #8f1f1f;
+}
+
+#macondo-utils-create-modal .mu-mini-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+#macondo-utils-create-modal .mu-mini-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: #6b4f2a;
+  cursor: pointer;
+}
+
+#macondo-utils-create-modal .mu-upload-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 2px solid #7a5a34;
+  background: #fff8eb;
+  padding: 6px 10px;
+  overflow: hidden;
+}
+
+#macondo-utils-create-modal .mu-upload-row[data-has-image='true'] {
+  background-size: cover;
+  background-position: center;
+}
+
+#macondo-utils-create-modal .mu-upload-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 248, 235, 0.78);
+  pointer-events: none;
+}
+
+#macondo-utils-create-modal .mu-upload-control {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+#macondo-utils-create-modal .mu-upload-trigger {
+  border: 2px solid #7a5a34;
+  background: #efe0c7;
+  color: #5a3e23;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#macondo-utils-create-modal .mu-upload-filename {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+#macondo-utils-create-modal .mu-upload-status {
+  position: relative;
+  z-index: 1;
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+#macondo-utils-create-modal .mu-upload-note {
+  margin-top: 4px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+#macondo-utils-create-modal .mu-hidden {
+  display: none;
+}
+
+#macondo-utils-create-modal .mu-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 132px;
+  overflow: auto;
+  padding: 2px 0;
+}
+
+#macondo-utils-create-modal .mu-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  max-width: 100%;
+  border: 2px solid #9b7a4f;
+  background: #f9ebd5;
+  color: #5a3e23;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#macondo-utils-create-modal .mu-pill[data-active='true'] {
+  border-color: #5a3e23;
+  background: #e7d0ab;
+  font-weight: 700;
+}
+
+#macondo-utils-create-modal .mu-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#macondo-utils-create-modal .mu-pill-more {
+  display: inline-flex;
+  align-items: center;
+  border: 2px dashed #9b7a4f;
+  background: #efdebf;
+  color: #6c5031;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#macondo-utils-create-modal .mu-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 700px) {
+  #macondo-utils-create-modal .mu-card {
+    padding: 16px 14px 14px;
+  }
+
+  #macondo-utils-create-modal h2 {
+    font-size: 30px;
+  }
+
+  #macondo-utils-create-modal .mu-levels {
+    grid-template-columns: 1fr;
+  }
+
+  #macondo-utils-create-modal .mu-split {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

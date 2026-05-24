@@ -50,6 +50,7 @@ jobs:
           cp manifest.json temp-chrome-extension/manifest.json
           cp content.js temp-chrome-extension/
           cp background.js temp-chrome-extension/
+          cp styles.css temp-chrome-extension/
 
           (cd temp-chrome-extension && zip -r "../macondo-utils-chrome-v${VERSION}.zip" .)
           rm -rf temp-chrome-extension
@@ -62,6 +63,7 @@ jobs:
           cp manifest_firefox.json temp-firefox-extension/manifest.json
           cp content.js temp-firefox-extension/
           cp background.js temp-firefox-extension/
+          cp styles.css temp-firefox-extension/
 
           (cd temp-firefox-extension && zip -r "../macondo-utils-firefox-v${VERSION}.zip" .)
           rm -rf temp-firefox-extension

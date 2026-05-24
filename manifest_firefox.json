@@ -20,6 +20,9 @@
       "matches": [
         "https://macondo.hackclub.com/*"
       ],
+      "css": [
+        "styles.css"
+      ],
       "js": [
         "content.js"
       ],
