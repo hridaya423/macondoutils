@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Macondo Utils",
+  "description": "Quality-of-life improvements for Macondo.",
+  "version": "0.1.0",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://macondo.hackclub.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

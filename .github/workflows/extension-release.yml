@@ -1,0 +1,112 @@
+name: Extension Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version from manifests
+        id: get_version
+        run: |
+          CHROME_VERSION=$(grep '"version"' manifest.json | sed -E 's/.*"version": "([^"]+)".*/\1/')
+          FIREFOX_VERSION=$(grep '"version"' manifest_firefox.json | sed -E 's/.*"version": "([^"]+)".*/\1/')
+
+          VERSION=$CHROME_VERSION
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [ "$CHROME_VERSION" != "$FIREFOX_VERSION" ]; then
+            echo "::warning::Chrome version ($CHROME_VERSION) != Firefox version ($FIREFOX_VERSION)"
+          fi
+
+      - name: Delete existing release if it exists
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            gh release delete "v${VERSION}" --yes
+          fi
+
+      - name: Build Chrome extension package
+        run: |
+          mkdir -p temp-chrome-extension
+          cp manifest.json temp-chrome-extension/manifest.json
+
+          find . -maxdepth 1 -type f \
+            ! -name 'manifest.json' \
+            ! -name 'manifest_firefox.json' \
+            ! -name '.DS_Store' \
+            -exec cp {} temp-chrome-extension/ \;
+
+          find . -mindepth 1 -maxdepth 1 -type d \
+            ! -name '.git' \
+            ! -name '.github' \
+            -exec cp -R {} temp-chrome-extension/ \;
+
+          (cd temp-chrome-extension && zip -r "../macondo-utils-chrome-v${VERSION}.zip" .)
+          rm -rf temp-chrome-extension
+
+      - name: Build Firefox extension package
+        run: |
+          mkdir -p temp-firefox-extension
+          cp manifest_firefox.json temp-firefox-extension/manifest.json
+
+          find . -maxdepth 1 -type f \
+            ! -name 'manifest.json' \
+            ! -name 'manifest_firefox.json' \
+            ! -name '.DS_Store' \
+            -exec cp {} temp-firefox-extension/ \;
+
+          find . -mindepth 1 -maxdepth 1 -type d \
+            ! -name '.git' \
+            ! -name '.github' \
+            -exec cp -R {} temp-firefox-extension/ \;
+
+          (cd temp-firefox-extension && zip -r "../macondo-utils-firefox-v${VERSION}.zip" .)
+          rm -rf temp-firefox-extension
+
+      - name: Upload Chrome extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macondo-utils-chrome-v${{ env.VERSION }}
+          path: macondo-utils-chrome-v${{ env.VERSION }}.zip
+          retention-days: 30
+
+      - name: Upload Firefox extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macondo-utils-firefox-v${{ env.VERSION }}
+          path: macondo-utils-firefox-v${{ env.VERSION }}.zip
+          retention-days: 30
+
+      - name: Create unified release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "Macondo Utils v${VERSION} - Chrome & Firefox" \
+            --generate-notes \
+            "macondo-utils-chrome-v${VERSION}.zip" \
+            "macondo-utils-firefox-v${VERSION}.zip"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Release Summary"
+            echo ""
+            echo "- Version: v${VERSION}"
+            echo "- Chrome: macondo-utils-chrome-v${VERSION}.zip"
+            echo "- Firefox: macondo-utils-firefox-v${VERSION}.zip"
+            echo "- URL: https://github.com/${{ github.repository }}/releases/tag/v${VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"
