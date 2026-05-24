@@ -25,8 +25,11 @@
   const DEBUG_PREFIX = "[Macondo Utils]";
   const IS_HARVEST_TAB = new URLSearchParams(window.location.search).has("macondo_utils_harvest");
   const ALLOW_VISIBLE_FALLBACK_HARVEST = false;
+  const CREATE_TILE_DRAG_THRESHOLD_PX = 6;
   const CREATE_MODAL_ID = "macondo-utils-create-modal";
   const CREATE_STYLE_ID = "macondo-utils-create-style";
+  let createTilePointerState = null;
+  let suppressNextCreateTileClickUntil = 0;
   const LEVEL_META = {
     software: {
       1: { name: "L1 Beginner", goldPerHour: 40, fruit: "Mango", fruitIcon: "/images/fruits/mango/icon.webp", desc: "A first ship: simple site, script, or tiny tool." },
@@ -761,6 +764,9 @@
       }
     };
 
+    thumbUploadRow.addEventListener("click", () => {
+      thumbUploadRow.focus();
+    });
     thumbUploadRow.addEventListener("paste", handleThumbnailPaste);
     root.addEventListener("paste", handleThumbnailPaste);
 
@@ -943,10 +949,53 @@
       return;
     }
 
+    if (Date.now() < suppressNextCreateTileClickUntil) {
+      return;
+    }
+
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
     openCreateProjectModal();
+  }
+
+  function trackCreateTilePointerDown(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    const addTile = target ? target.closest("#projects .farm-tile-add") : null;
+    if (!addTile) {
+      createTilePointerState = null;
+      return;
+    }
+
+    createTilePointerState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragged: false
+    };
+  }
+
+  function trackCreateTilePointerMove(event) {
+    if (!createTilePointerState || createTilePointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const dx = Math.abs(event.clientX - createTilePointerState.startX);
+    const dy = Math.abs(event.clientY - createTilePointerState.startY);
+    if (dx >= CREATE_TILE_DRAG_THRESHOLD_PX || dy >= CREATE_TILE_DRAG_THRESHOLD_PX) {
+      createTilePointerState.dragged = true;
+    }
+  }
+
+  function trackCreateTilePointerUp(event) {
+    if (!createTilePointerState || createTilePointerState.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (createTilePointerState.dragged) {
+      suppressNextCreateTileClickUntil = Date.now() + 300;
+    }
+    createTilePointerState = null;
   }
 
   function hasProjectContextOnPage() {
@@ -1154,6 +1203,10 @@
     return;
   }
 
+  document.addEventListener("pointerdown", trackCreateTilePointerDown, true);
+  document.addEventListener("pointermove", trackCreateTilePointerMove, true);
+  document.addEventListener("pointerup", trackCreateTilePointerUp, true);
+  document.addEventListener("pointercancel", trackCreateTilePointerUp, true);
   document.addEventListener("click", maybeInterceptCreateTileClick, true);
 
   updateShopCardHours();
