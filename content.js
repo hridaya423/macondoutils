@@ -15,6 +15,8 @@
 
   const SHOP_CARD_SELECTOR = "[data-flip-id]";
   const PROJECT_CACHE_KEY = "macondo_utils_project_rates_v1";
+  const PROJECT_TITLE_CACHE_KEY = "macondo_utils_project_titles_v1";
+  const PROJECT_TILE_ORDER_CACHE_KEY = "macondo_utils_project_tile_order_v1";
   const PROJECT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
   let effectiveGoldPerHour = null;
@@ -26,10 +28,15 @@
   const IS_HARVEST_TAB = new URLSearchParams(window.location.search).has("macondo_utils_harvest");
   const ALLOW_VISIBLE_FALLBACK_HARVEST = false;
   const CREATE_TILE_DRAG_THRESHOLD_PX = 6;
+  const PROJECT_LABEL_LAYER_ID = "macondo-utils-project-label-layer";
+  const PROJECT_LABEL_TEXT_MAX = 26;
   const CREATE_MODAL_ID = "macondo-utils-create-modal";
   const CREATE_STYLE_ID = "macondo-utils-create-style";
   let createTilePointerState = null;
   let suppressNextCreateTileClickUntil = 0;
+  let projectLabelsQueued = false;
+  let projectTitleById = {};
+  let projectTileOrder = [];
   const LEVEL_META = {
     software: {
       1: { name: "L1 Beginner", goldPerHour: 40, fruit: "Mango", fruitIcon: "/images/fruits/mango/icon.webp", desc: "A first ship: simple site, script, or tiny tool." },
@@ -180,6 +187,25 @@
     ) || null;
   }
 
+  function parseProjectTitleFromModalElement(modal) {
+    if (!modal) {
+      return "";
+    }
+
+    const titleCandidates = [
+      modal.querySelector("h1"),
+      modal.querySelector("h2"),
+      modal.querySelector("[class*='title']"),
+      modal.querySelector("[class*='name']"),
+      modal.querySelector("a[href*='/projects/']")
+    ];
+    const title = titleCandidates
+      .map((el) => String(el?.textContent || "").trim())
+      .find((value) => value.length > 1 && !/^back to farm$/i.test(value));
+
+    return title || "";
+  }
+
   function parseMetricsFromOpenModal() {
     const modal = getProjectModalElement();
     if (!modal) {
@@ -200,7 +226,8 @@
       return null;
     }
 
-    return { projectId, ...metrics };
+    const title = parseProjectTitleFromModalElement(modal);
+    return { projectId, title, ...metrics };
   }
 
   async function closeOpenModal() {
@@ -295,6 +322,34 @@
     return response.text();
   }
 
+  function parseProjectTitleFromHtml(html) {
+    if (!html) {
+      return "";
+    }
+
+    try {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const candidates = [
+        doc.querySelector("h1"),
+        doc.querySelector("h2"),
+        doc.querySelector("meta[property='og:title']"),
+        doc.querySelector("title")
+      ];
+      for (const node of candidates) {
+        if (!node) {
+          continue;
+        }
+        const raw = node.getAttribute?.("content") || node.textContent || "";
+        const clean = String(raw).trim().replace(/\s*\|\s*Macondo.*$/i, "");
+        if (clean.length > 1) {
+          return clean;
+        }
+      }
+    } catch (_err) {}
+
+    return "";
+  }
+
   function readCachedRate() {
     const raw = localStorage.getItem(PROJECT_CACHE_KEY);
     if (!raw) {
@@ -322,11 +377,552 @@
     localStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(payload));
   }
 
+  function readProjectTitleCache() {
+    const raw = localStorage.getItem(PROJECT_TITLE_CACHE_KEY);
+    if (!raw) {
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return {};
+      }
+      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_CACHE_TTL_MS) {
+        return {};
+      }
+      if (!parsed.titles || typeof parsed.titles !== "object") {
+        return {};
+      }
+      return parsed.titles;
+    } catch (_err) {
+      return {};
+    }
+  }
+
+  function writeProjectTitleCache(titles) {
+    localStorage.setItem(PROJECT_TITLE_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      titles
+    }));
+  }
+
+  function readProjectTileOrderCache() {
+    const raw = localStorage.getItem(PROJECT_TILE_ORDER_CACHE_KEY);
+    if (!raw) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return [];
+      }
+      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_CACHE_TTL_MS) {
+        return [];
+      }
+      if (!Array.isArray(parsed.order)) {
+        return [];
+      }
+      return parsed.order.map((id) => String(id));
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function readProjectIdsFromRateCache() {
+    const raw = localStorage.getItem(PROJECT_CACHE_KEY);
+    if (!raw) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.projectIds)) {
+        return [];
+      }
+      return parsed.projectIds.map((id) => String(id));
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function writeProjectTileOrderCache(order) {
+    localStorage.setItem(PROJECT_TILE_ORDER_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      order: Array.isArray(order) ? order.map((id) => String(id)) : []
+    }));
+  }
+
   function msUntilNextLocalMidnight() {
     const now = new Date();
     const next = new Date(now);
     next.setHours(24, 0, 0, 0);
     return Math.max(1000, next.getTime() - now.getTime());
+  }
+
+  function truncateProjectLabel(text, max = PROJECT_LABEL_TEXT_MAX) {
+    const clean = String(text || "").trim().replace(/\s+/g, " ");
+    if (!clean) {
+      return "";
+    }
+    if (clean.length <= max) {
+      return clean;
+    }
+    return `${clean.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
+  }
+
+  function splitProjectLabelLines(text) {
+    const clean = truncateProjectLabel(text, 28);
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (words.length === 2 && clean.length > 12) {
+      return words;
+    }
+    if (words.length <= 2 || clean.length <= 15) {
+      return [clean];
+    }
+
+    let bestIndex = 1;
+    let bestScore = Number.POSITIVE_INFINITY;
+    for (let i = 1; i < words.length; i += 1) {
+      const left = words.slice(0, i).join(" ");
+      const right = words.slice(i).join(" ");
+      const score = Math.abs(left.length - right.length);
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+
+    return [
+      words.slice(0, bestIndex).join(" "),
+      words.slice(bestIndex).join(" ")
+    ];
+  }
+
+  function getLabelRect(anchorX, anchorY, placement, lineCount) {
+    const width = placement === "bottom" || placement === "top" ? 120 : 108;
+    const height = lineCount > 1 ? 32 : 18;
+
+    if (placement === "right") {
+      return { x: anchorX, y: anchorY - height / 2, width, height };
+    }
+    if (placement === "left") {
+      return { x: anchorX - width, y: anchorY - height / 2, width, height };
+    }
+    if (placement === "top") {
+      return { x: anchorX - width / 2, y: anchorY - height, width, height };
+    }
+    return { x: anchorX - width / 2, y: anchorY, width, height };
+  }
+
+  function getRectOverlapArea(a, b) {
+    const overlapX = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+    const overlapY = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    return overlapX * overlapY;
+  }
+
+  function buildTileClusters(tileModels) {
+    const visited = new Set();
+    const clusters = [];
+
+    function touches(a, b) {
+      const ax2 = a.left + a.width;
+      const ay2 = a.top + a.height;
+      const bx2 = b.left + b.width;
+      const by2 = b.top + b.height;
+      const gapX = Math.max(0, Math.max(a.left - bx2, b.left - ax2));
+      const gapY = Math.max(0, Math.max(a.top - by2, b.top - ay2));
+      return gapX <= 54 && gapY <= 54;
+    }
+
+    tileModels.forEach((tile) => {
+      if (visited.has(tile.tileId)) {
+        return;
+      }
+      const queue = [tile];
+      const cluster = [];
+      visited.add(tile.tileId);
+
+      while (queue.length) {
+        const current = queue.shift();
+        cluster.push(current);
+        tileModels.forEach((candidate) => {
+          if (visited.has(candidate.tileId)) {
+            return;
+          }
+          if (touches(current, candidate)) {
+            visited.add(candidate.tileId);
+            queue.push(candidate);
+          }
+        });
+      }
+
+      clusters.push(cluster);
+    });
+
+    return clusters;
+  }
+
+  function getClusterBounds(cluster) {
+    return cluster.reduce((acc, tile) => ({
+      left: Math.min(acc.left, tile.left),
+      top: Math.min(acc.top, tile.top),
+      right: Math.max(acc.right, tile.left + tile.width),
+      bottom: Math.max(acc.bottom, tile.top + tile.height)
+    }), { left: Number.POSITIVE_INFINITY, top: Number.POSITIVE_INFINITY, right: 0, bottom: 0 });
+  }
+
+  function classifyClusterShape(cluster) {
+    if (cluster.length <= 1) {
+      return "single";
+    }
+    const bounds = getClusterBounds(cluster);
+    const spanX = bounds.right - bounds.left;
+    const spanY = bounds.bottom - bounds.top;
+    if (spanY > spanX * 1.2) {
+      return "vertical";
+    }
+    if (spanX > spanY * 1.15) {
+      return "horizontal";
+    }
+    return "compact";
+  }
+
+  function getProjectVisualObstacleRects(projectsRoot) {
+    return Array.from(projectsRoot.querySelectorAll(".farm-tile-project, .farm-tile-add"))
+      .map((tile, index) => {
+        const tileId = tile.dataset.muTileId || `obstacle-${index}`;
+        if (!tile.dataset.muTileId) {
+          tile.dataset.muTileId = tileId;
+        }
+        return {
+          tileId,
+          x: tile.offsetLeft,
+          y: tile.offsetTop,
+          width: tile.offsetWidth || 120,
+          height: tile.offsetHeight || 90
+        };
+      });
+  }
+
+  function getTileLabelCandidate(tileModel, placement) {
+    const anchor = placement === "bottom"
+      ? { x: tileModel.left + tileModel.width * 0.62, y: tileModel.top + tileModel.height + 9 }
+      : placement === "top"
+        ? { x: tileModel.left + tileModel.width * 0.58, y: tileModel.top - 9 }
+        : placement === "right"
+          ? { x: tileModel.left + tileModel.width + 10, y: tileModel.top + tileModel.height * 0.64 }
+          : { x: tileModel.left - 10, y: tileModel.top + tileModel.height * 0.64 };
+
+    return { placement, anchor };
+  }
+
+  function applyMeasuredLabelCandidate(label, candidate, layerRect) {
+    label.setAttribute("data-placement", candidate.placement);
+    label.style.left = `${Math.round(candidate.anchor.x)}px`;
+    label.style.top = `${Math.round(candidate.anchor.y)}px`;
+    const rect = label.getBoundingClientRect();
+    return {
+      x: rect.left - layerRect.left,
+      y: rect.top - layerRect.top,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+
+  function scoreMeasuredLabelRect(rect, bounds, visualObstacleRects, placedLabelRects, placementIndex, ownTileId) {
+    let score = placementIndex * 80;
+
+    if (rect.x < 0) {
+      score += Math.abs(rect.x) * 20;
+    }
+    if (rect.y < 0) {
+      score += Math.abs(rect.y) * 20;
+    }
+    if (rect.x + rect.width > bounds.width) {
+      score += Math.abs(rect.x + rect.width - bounds.width) * 20;
+    }
+    if (rect.y + rect.height > bounds.height) {
+      score += Math.abs(rect.y + rect.height - bounds.height) * 20;
+    }
+
+    visualObstacleRects.forEach((obstacleRect) => {
+      if (obstacleRect.tileId === ownTileId) {
+        return;
+      }
+      const overlap = getRectOverlapArea(rect, obstacleRect);
+      if (overlap > 8) {
+        score += 10000 + overlap * 18;
+      }
+    });
+
+    placedLabelRects.forEach((labelRect) => {
+      const overlap = getRectOverlapArea(rect, labelRect);
+      if (overlap > 4) {
+        score += 180 + overlap * 1.5;
+      }
+    });
+
+    return score;
+  }
+
+  function chooseClusterSharedSide(cluster, bounds) {
+    const clusterBounds = getClusterBounds(cluster);
+    const leftSpace = clusterBounds.left;
+    const rightSpace = bounds.width - clusterBounds.right;
+    return rightSpace >= leftSpace ? "right" : "left";
+  }
+
+  function getClusterSharedSideByTile(tileModels, bounds) {
+    const sharedSideByTile = new Map();
+    buildTileClusters(tileModels).forEach((cluster) => {
+      if (classifyClusterShape(cluster) !== "vertical") {
+        return;
+      }
+      const side = chooseClusterSharedSide(cluster, bounds);
+      cluster.forEach((tile) => {
+        sharedSideByTile.set(tile.tileId, side);
+      });
+    });
+    return sharedSideByTile;
+  }
+
+  function chooseMeasuredTileLabelPlacement(tileModel, label, layerRect, bounds, visualObstacleRects, placedLabelRects, sharedSide) {
+    const placements = sharedSide
+      ? ["bottom", sharedSide, sharedSide === "right" ? "left" : "right", "top"]
+      : ["bottom", "top", "right", "left"];
+
+    let best = null;
+    placements.forEach((placement, index) => {
+      const candidate = getTileLabelCandidate(tileModel, placement);
+      const rect = applyMeasuredLabelCandidate(label, candidate, layerRect);
+      const score = scoreMeasuredLabelRect(rect, bounds, visualObstacleRects, placedLabelRects, index, tileModel.tileId);
+      if (!best || score < best.score) {
+        best = { ...candidate, rect, score };
+      }
+    });
+
+    return best;
+  }
+
+  function guessProjectTitleFromTile(tile) {
+    const projectId = tile.getAttribute("data-mu-project-id") || "";
+    if (projectId && projectTitleById[projectId]) {
+      return projectTitleById[projectId];
+    }
+
+    const direct = tile.getAttribute("data-project-name")
+      || tile.getAttribute("data-title")
+      || tile.getAttribute("title")
+      || tile.getAttribute("aria-label");
+    if (direct && direct.trim()) {
+      return direct.trim();
+    }
+
+    const imgAlt = tile.querySelector("img[alt]")?.getAttribute("alt") || "";
+    if (imgAlt && imgAlt.trim() && !/^(tile|ground|fruit)$/i.test(imgAlt.trim())) {
+      return imgAlt.trim();
+    }
+
+    const modalLink = tile.querySelector("a[href*='/projects/']");
+    if (modalLink?.textContent?.trim()) {
+      return modalLink.textContent.trim();
+    }
+
+    return "";
+  }
+
+  function ensureProjectLabelLayer() {
+    const projectsRoot = document.getElementById("projects");
+    if (!projectsRoot) {
+      return null;
+    }
+
+    let layer = document.getElementById(PROJECT_LABEL_LAYER_ID);
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = PROJECT_LABEL_LAYER_ID;
+      projectsRoot.appendChild(layer);
+    }
+    return layer;
+  }
+
+  function syncProjectGroundLabels() {
+    const projectsRoot = document.getElementById("projects");
+    if (!projectsRoot) {
+      return;
+    }
+
+    const layer = ensureProjectLabelLayer();
+    if (!layer) {
+      return;
+    }
+
+    const tiles = Array.from(projectsRoot.querySelectorAll(".farm-tile-project"));
+    const obstacleTiles = Array.from(projectsRoot.querySelectorAll(".farm-tile-project, .farm-tile-add"));
+    const existing = new Map();
+    Array.from(layer.querySelectorAll(".mu-ground-label")).forEach((el) => {
+      const id = el.getAttribute("data-tile-id");
+      if (id) {
+        existing.set(id, el);
+      }
+    });
+
+    const fallbackOrder = projectTileOrder.length
+      ? projectTileOrder
+      : (Object.keys(projectTitleById).length ? Object.keys(projectTitleById) : readProjectIdsFromRateCache());
+
+    const layerRect = layer.getBoundingClientRect();
+
+    const tileModels = [];
+    const seen = new Set();
+    tiles.forEach((tile, index) => {
+      const tileId = tile.dataset.muTileId || `tile-${index}`;
+      tile.dataset.muTileId = tileId;
+      seen.add(tileId);
+
+      if (!tile.getAttribute("data-mu-project-id") && fallbackOrder[index]) {
+        tile.setAttribute("data-mu-project-id", String(fallbackOrder[index]));
+      }
+
+      const rawTitle = guessProjectTitleFromTile(tile);
+      if (!rawTitle) {
+        return;
+      }
+
+      const left = tile.offsetLeft;
+      const top = tile.offsetTop;
+      const tileWidth = tile.offsetWidth || 120;
+      const tileHeight = tile.offsetHeight || 90;
+
+      tileModels.push({
+        tile,
+        tileId,
+        rawTitle,
+        lines: splitProjectLabelLines(rawTitle),
+        left,
+        top,
+        width: tileWidth,
+        height: tileHeight,
+        centerX: left + tileWidth / 2,
+        centerY: top + tileHeight / 2
+      });
+    });
+
+    const tileRects = obstacleTiles.map((tile, index) => {
+      const tileId = tile.dataset.muTileId || `obstacle-${index}`;
+      if (!tile.dataset.muTileId) {
+        tile.dataset.muTileId = tileId;
+      }
+      const left = tile.offsetLeft;
+      const top = tile.offsetTop;
+      return {
+        tileId,
+        x: left,
+        y: top,
+        width: tile.offsetWidth || 120,
+        height: tile.offsetHeight || 90
+      };
+    });
+    const bounds = {
+      width: projectsRoot.clientWidth || projectsRoot.offsetWidth || 0,
+      height: projectsRoot.clientHeight || projectsRoot.offsetHeight || 0
+    };
+    const visualObstacleRects = getProjectVisualObstacleRects(projectsRoot);
+    const placedLabelRects = [];
+    const sharedSideByTile = getClusterSharedSideByTile(tileModels, bounds);
+
+    tileModels
+      .slice()
+      .sort((a, b) => a.top - b.top || a.left - b.left)
+      .forEach((tileModel) => {
+        let label = existing.get(tileModel.tileId);
+        if (!label) {
+          label = document.createElement("div");
+          label.className = "mu-ground-label";
+          label.setAttribute("data-tile-id", tileModel.tileId);
+          layer.appendChild(label);
+        }
+
+        label.replaceChildren();
+        const inner = document.createElement("div");
+        inner.className = "mu-ground-label-inner";
+        tileModel.lines.forEach((line) => {
+          const lineNode = document.createElement("span");
+          lineNode.className = "mu-ground-label-line";
+          lineNode.textContent = line;
+          inner.appendChild(lineNode);
+        });
+        label.appendChild(inner);
+        label.setAttribute("title", tileModel.rawTitle);
+
+        label.style.visibility = "hidden";
+        const chosenPlacement = chooseMeasuredTileLabelPlacement(
+          tileModel,
+          label,
+          layerRect,
+          bounds,
+          visualObstacleRects,
+          placedLabelRects,
+          sharedSideByTile.get(tileModel.tileId)
+        );
+
+        if (chosenPlacement) {
+          label.setAttribute("data-placement", chosenPlacement.placement);
+          label.style.left = `${Math.round(chosenPlacement.anchor.x)}px`;
+          label.style.top = `${Math.round(chosenPlacement.anchor.y)}px`;
+          placedLabelRects.push(chosenPlacement.rect);
+        }
+        label.style.visibility = "";
+      });
+
+    existing.forEach((node, id) => {
+      if (!seen.has(id)) {
+        node.remove();
+      }
+    });
+  }
+
+  function queueProjectGroundLabelsSync() {
+    if (projectLabelsQueued) {
+      return;
+    }
+    projectLabelsQueued = true;
+    requestAnimationFrame(() => {
+      projectLabelsQueued = false;
+      syncProjectGroundLabels();
+    });
+  }
+
+  async function hydrateProjectTitlesFromKnownIds() {
+    if (Object.keys(projectTitleById).length > 0) {
+      return;
+    }
+
+    const ids = getKnownProjectIds();
+    if (!ids.length) {
+      return;
+    }
+
+    const mergedTitles = { ...projectTitleById };
+    for (const projectId of ids) {
+      try {
+        const html = await fetchProjectHtml(projectId);
+        if (!html) {
+          continue;
+        }
+        const title = parseProjectTitleFromHtml(html);
+        if (title) {
+          mergedTitles[String(projectId)] = title;
+        }
+      } catch (_err) {
+        continue;
+      }
+    }
+
+    if (Object.keys(mergedTitles).length > 0) {
+      projectTitleById = mergedTitles;
+      writeProjectTitleCache(projectTitleById);
+      queueProjectGroundLabelsSync();
+    }
   }
 
   function onCreateEscape(event) {
@@ -944,11 +1540,23 @@
       let weightedRateSum = 0;
       let totalHours = 0;
       const harvestedIds = [];
+      const mergedTitles = { ...projectTitleById };
       harvested.forEach((metrics) => {
         weightedRateSum += metrics.hours * metrics.goldPerHour;
         totalHours += metrics.hours;
         harvestedIds.push(metrics.projectId);
+        if (metrics.title) {
+          mergedTitles[String(metrics.projectId)] = String(metrics.title).trim();
+        }
       });
+
+      if (Object.keys(mergedTitles).length > Object.keys(projectTitleById).length) {
+        projectTitleById = mergedTitles;
+        writeProjectTitleCache(projectTitleById);
+      }
+      projectTileOrder = harvestedIds.map((id) => String(id));
+      writeProjectTileOrderCache(projectTileOrder);
+      queueProjectGroundLabelsSync();
 
       if (totalHours <= 0 || weightedRateSum <= 0) {
         return null;
@@ -962,12 +1570,17 @@
 
     let weightedRateSum = 0;
     let totalHours = 0;
+    const mergedTitles = { ...projectTitleById };
 
     for (const projectId of projectIds) {
       try {
         const html = await fetchProjectHtml(projectId);
         if (!html) {
           continue;
+        }
+        const title = parseProjectTitleFromHtml(html);
+        if (title) {
+          mergedTitles[String(projectId)] = title;
         }
         const metrics = parseProjectMetricsFromHtml(html);
         if (!metrics) {
@@ -983,6 +1596,14 @@
     if (totalHours <= 0 || weightedRateSum <= 0) {
       return null;
     }
+
+    if (Object.keys(mergedTitles).length > Object.keys(projectTitleById).length) {
+      projectTitleById = mergedTitles;
+      writeProjectTitleCache(projectTitleById);
+      queueProjectGroundLabelsSync();
+    }
+    projectTileOrder = projectIds.map((id) => String(id));
+    writeProjectTileOrderCache(projectTileOrder);
 
     return {
       effectiveGoldPerHour: weightedRateSum / totalHours,
@@ -1100,6 +1721,7 @@
 
   const observer = new MutationObserver(() => {
     scheduleRender();
+    queueProjectGroundLabelsSync();
     if (hasProjectContextOnPage()) {
       scheduleRefresh("dom-mutation-project-context");
     }
@@ -1131,13 +1753,27 @@
     return;
   }
 
+  projectTitleById = readProjectTitleCache();
+  projectTileOrder = readProjectTileOrderCache();
+  if (!projectTileOrder.length) {
+    const fromTitles = Object.keys(projectTitleById);
+    if (fromTitles.length) {
+      projectTileOrder = fromTitles;
+    } else {
+      projectTileOrder = readProjectIdsFromRateCache();
+    }
+  }
+
   document.addEventListener("pointerdown", trackCreateTilePointerDown, true);
   document.addEventListener("pointermove", trackCreateTilePointerMove, true);
   document.addEventListener("pointerup", trackCreateTilePointerUp, true);
   document.addEventListener("pointercancel", trackCreateTilePointerUp, true);
   document.addEventListener("click", maybeInterceptCreateTileClick, true);
+  window.addEventListener("resize", queueProjectGroundLabelsSync);
 
   updateShopCardHours();
+  queueProjectGroundLabelsSync();
+  hydrateProjectTitlesFromKnownIds();
   refreshEffectiveRate();
   setInterval(() => {
     refreshEffectiveRate();

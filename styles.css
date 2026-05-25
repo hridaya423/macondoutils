@@ -404,6 +404,47 @@
   gap: 10px;
 }
 
+#macondo-utils-project-label-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+#macondo-utils-project-label-layer .mu-ground-label {
+  position: absolute;
+  width: 126px;
+  transform: translateX(-50%);
+  text-align: center;
+  user-select: none;
+}
+
+#macondo-utils-project-label-layer .mu-ground-label-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  font-size: 13px;
+  font-style: italic;
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: 0.01em;
+  color: rgba(76, 57, 28, 0.92);
+  transform: rotate(-24deg);
+  transform-origin: center center;
+  text-shadow:
+    0 1px 0 rgba(246, 236, 208, 0.5),
+    0 0 6px rgba(222, 214, 152, 0.18);
+}
+
+#macondo-utils-project-label-layer .mu-ground-label-line {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 700px) {
   #macondo-utils-create-modal .mu-card {
     padding: 16px 14px 14px;
