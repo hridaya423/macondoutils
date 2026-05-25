@@ -17,7 +17,10 @@
   const PROJECT_CACHE_KEY = "macondo_utils_project_rates_v1";
   const PROJECT_TITLE_CACHE_KEY = "macondo_utils_project_titles_v1";
   const PROJECT_TILE_ORDER_CACHE_KEY = "macondo_utils_project_tile_order_v1";
+  const PROJECT_LABEL_META_CACHE_KEY = "macondo_utils_project_label_meta_v1";
+  const PROJECT_ID_BOOTSTRAP_CACHE_KEY = "macondo_utils_project_id_bootstrap_v1";
   const PROJECT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
   let effectiveGoldPerHour = null;
   let refreshInFlight = false;
@@ -35,7 +38,11 @@
   let createTilePointerState = null;
   let suppressNextCreateTileClickUntil = 0;
   let projectLabelsQueued = false;
+  let projectMetaRefreshInFlight = false;
+  let lastProjectMetaRefreshAt = 0;
+  let projectIdsBootstrapped = false;
   let projectTitleById = {};
+  let projectMetaById = {};
   let projectTileOrder = [];
   const LEVEL_META = {
     software: {
@@ -112,9 +119,37 @@
     return ids;
   }
 
+  function getProjectIdsFromDomLinks(root = document) {
+    const ids = new Set();
+    Array.from(root.querySelectorAll("a[href*='/projects/']")).forEach((link) => {
+      const href = link.getAttribute("href") || "";
+      const match = href.match(/\/projects\/(\d+)/);
+      if (match?.[1]) {
+        ids.add(String(match[1]));
+      }
+    });
+    return Array.from(ids).slice(0, PROJECT_FETCH_LIMIT);
+  }
+
+  function mergeKnownProjectIds(ids) {
+    if (!Array.isArray(ids) || !ids.length) {
+      return false;
+    }
+    const merged = new Set(projectTileOrder.map((id) => String(id)));
+    ids.forEach((id) => merged.add(String(id)));
+    const next = Array.from(merged).slice(0, PROJECT_FETCH_LIMIT);
+    const changed = JSON.stringify(next) !== JSON.stringify(projectTileOrder);
+    if (changed) {
+      projectTileOrder = next;
+      writeProjectTileOrderCache(projectTileOrder);
+    }
+    return changed;
+  }
+
   function getKnownProjectIds() {
     const ids = new Set();
     findProjectIdsInHtml(document.documentElement.innerHTML).forEach((id) => ids.add(id));
+    getProjectIdsFromDomLinks(document).forEach((id) => ids.add(id));
 
     const fromStorage = localStorage.getItem(PROJECT_CACHE_KEY);
     if (fromStorage) {
@@ -153,9 +188,21 @@
       return null;
     }
 
+    const streakMatch = html.match(/(\d+)\s*[- ]\s*d(?:ay|ays)?(?:\s+project)?\s*streak/i)
+      || html.match(/(\d+)\s*d(?:ay|ays)?\s*streak/i);
+    const streakDays = streakMatch ? Number.parseInt(streakMatch[1], 10) : 0;
+    const totalEarnedMatch = html.match(/Total\s*Earned:\s*([\d,]+)\s*gold/i);
+    const totalEarnedGold = totalEarnedMatch
+      ? Number.parseInt(String(totalEarnedMatch[1]).replace(/,/g, ""), 10)
+      : 0;
+    const goldPerHour = PROJECT_HOURLY_RATE[level] * multiplier;
+
     return {
       hours,
-      goldPerHour: PROJECT_HOURLY_RATE[level] * multiplier,
+      goldPerHour,
+      streakDays,
+      estCoins: Math.round(hours * goldPerHour),
+      totalEarnedGold: Number.isFinite(totalEarnedGold) ? Math.max(0, totalEarnedGold) : 0,
       level,
       multiplier
     };
@@ -314,6 +361,60 @@
     });
   }
 
+  async function bootstrapProjectIdsFromHiddenHarvestOnce() {
+    if (projectIdsBootstrapped || projectTileOrder.length) {
+      return;
+    }
+
+    const harvested = await requestBackgroundHarvest();
+    if (!Array.isArray(harvested) || !harvested.length) {
+      return;
+    }
+
+    let weightedRateSum = 0;
+    let totalHours = 0;
+    const harvestedIds = [];
+    const mergedTitles = { ...projectTitleById };
+    const mergedMeta = { ...projectMetaById };
+    harvested.forEach((metrics) => {
+      weightedRateSum += (metrics.hours || 0) * (metrics.goldPerHour || 0);
+      totalHours += metrics.hours || 0;
+      harvestedIds.push(String(metrics.projectId));
+      if (metrics.title) {
+        mergedTitles[String(metrics.projectId)] = String(metrics.title).trim();
+      }
+      const meta = buildProjectMeta(metrics.title, metrics);
+      if (meta) {
+        mergedMeta[String(metrics.projectId)] = meta;
+      }
+    });
+
+    if (harvestedIds.length) {
+      projectTileOrder = harvestedIds;
+      writeProjectTileOrderCache(projectTileOrder);
+      projectIdsBootstrapped = true;
+      writeProjectIdBootstrapCache(true);
+    }
+    if (Object.keys(mergedTitles).length) {
+      projectTitleById = mergedTitles;
+      writeProjectTitleCache(projectTitleById);
+    }
+    if (Object.keys(mergedMeta).length) {
+      projectMetaById = mergedMeta;
+      writeProjectLabelMetaCache(projectMetaById);
+      queueProjectGroundLabelsSync();
+    }
+    if (totalHours > 0 && weightedRateSum > 0) {
+      effectiveGoldPerHour = weightedRateSum / totalHours;
+      writeCache({
+        timestamp: Date.now(),
+        effectiveGoldPerHour,
+        totalHours,
+        projectIds: harvestedIds
+      });
+    }
+  }
+
   async function fetchProjectHtml(projectId) {
     const response = await fetch(`/projects/${projectId}`, { credentials: "include" });
     if (!response.ok) {
@@ -404,6 +505,89 @@
       timestamp: Date.now(),
       titles
     }));
+  }
+
+  function readProjectLabelMetaCache() {
+    const raw = localStorage.getItem(PROJECT_LABEL_META_CACHE_KEY);
+    if (!raw) {
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return {};
+      }
+      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_CACHE_TTL_MS) {
+        return {};
+      }
+      if (!parsed.meta || typeof parsed.meta !== "object") {
+        return {};
+      }
+      return parsed.meta;
+    } catch (_err) {
+      return {};
+    }
+  }
+
+  function writeProjectLabelMetaCache(meta) {
+    localStorage.setItem(PROJECT_LABEL_META_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      meta
+    }));
+  }
+
+  function readProjectIdBootstrapCache() {
+    const raw = localStorage.getItem(PROJECT_ID_BOOTSTRAP_CACHE_KEY);
+    if (!raw) {
+      return false;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      return Boolean(parsed && parsed.done);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function writeProjectIdBootstrapCache(done) {
+    localStorage.setItem(PROJECT_ID_BOOTSTRAP_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      done: Boolean(done)
+    }));
+  }
+
+  function buildProjectMeta(title, metrics) {
+    if (!metrics || !Number.isFinite(metrics.hours) || metrics.hours <= 0) {
+      return null;
+    }
+    const hours = Number(metrics.hours);
+    const streakDays = Number.isFinite(metrics.streakDays) ? Math.max(0, Math.round(metrics.streakDays)) : 0;
+    const estCoins = Number.isFinite(metrics.estCoins)
+      ? Math.max(0, Math.round(metrics.estCoins))
+      : Number.isFinite(metrics.goldPerHour) ? Math.max(0, Math.round(hours * Number(metrics.goldPerHour))) : 0;
+    const totalEarnedGold = Number.isFinite(metrics.totalEarnedGold)
+      ? Math.max(0, Math.round(metrics.totalEarnedGold))
+      : 0;
+    const futureCoins = Math.max(0, estCoins - totalEarnedGold);
+    return {
+      title: String(title || "").trim(),
+      hours,
+      streakDays,
+      estCoins,
+      totalEarnedGold,
+      futureCoins
+    };
+  }
+
+  function formatLabelMetaLines(meta) {
+    if (!meta) {
+      return [];
+    }
+    const hoursText = formatHours(meta.hours);
+    const streakText = `${meta.streakDays || 0}d streak`;
+    const futureOrEst = Number.isFinite(meta.futureCoins) ? meta.futureCoins : (meta.estCoins || 0);
+    const coinsText = `${futureOrEst} est coins`;
+    return [hoursText, streakText, coinsText];
   }
 
   function readProjectTileOrderCache() {
@@ -615,21 +799,66 @@
     return { placement, anchor };
   }
 
-  function applyMeasuredLabelCandidate(label, candidate, layerRect) {
+  function applyMeasuredLabelCandidate(label, candidate, layerRect, bounds) {
     label.setAttribute("data-placement", candidate.placement);
     label.style.left = `${Math.round(candidate.anchor.x)}px`;
     label.style.top = `${Math.round(candidate.anchor.y)}px`;
-    const rect = label.getBoundingClientRect();
-    return {
+    let rect = label.getBoundingClientRect();
+    let localRect = {
       x: rect.left - layerRect.left,
       y: rect.top - layerRect.top,
       width: rect.width,
       height: rect.height
     };
+
+    if (bounds) {
+      const minX = 4;
+      const maxX = Math.max(minX, bounds.width - localRect.width - 4);
+      const minY = 4;
+      const maxY = Math.max(minY, bounds.height - localRect.height - 4);
+
+      if (candidate.placement === "bottom" || candidate.placement === "top") {
+        const clampedX = Math.min(maxX, Math.max(minX, localRect.x));
+        if (Math.abs(clampedX - localRect.x) > 0.5) {
+          label.style.left = `${Math.round(candidate.anchor.x + (clampedX - localRect.x))}px`;
+          rect = label.getBoundingClientRect();
+          localRect = {
+            x: rect.left - layerRect.left,
+            y: rect.top - layerRect.top,
+            width: rect.width,
+            height: rect.height
+          };
+        }
+      } else {
+        const clampedY = Math.min(maxY, Math.max(minY, localRect.y));
+        if (Math.abs(clampedY - localRect.y) > 0.5) {
+          label.style.top = `${Math.round(candidate.anchor.y + (clampedY - localRect.y))}px`;
+          rect = label.getBoundingClientRect();
+          localRect = {
+            x: rect.left - layerRect.left,
+            y: rect.top - layerRect.top,
+            width: rect.width,
+            height: rect.height
+          };
+        }
+      }
+    }
+
+    return {
+      rect: localRect,
+      anchor: {
+        x: Number.parseFloat(label.style.left || "0"),
+        y: Number.parseFloat(label.style.top || "0")
+      }
+    };
   }
 
-  function scoreMeasuredLabelRect(rect, bounds, visualObstacleRects, placedLabelRects, placementIndex, ownTileId) {
+  function scoreMeasuredLabelRect(rect, bounds, visualObstacleRects, placedLabelRects, placement, placementIndex, ownTileId) {
     let score = placementIndex * 80;
+
+    if (placement === "top") {
+      score += 650;
+    }
 
     if (rect.x < 0) {
       score += Math.abs(rect.x) * 20;
@@ -685,18 +914,64 @@
     return sharedSideByTile;
   }
 
-  function chooseMeasuredTileLabelPlacement(tileModel, label, layerRect, bounds, visualObstacleRects, placedLabelRects, sharedSide) {
+  function getHorizontalClusterForceBottomByTile(tileModels) {
+    const forceBottomByTile = new Map();
+    buildTileClusters(tileModels).forEach((cluster) => {
+      if (classifyClusterShape(cluster) !== "horizontal" || cluster.length < 2) {
+        return;
+      }
+      cluster.forEach((tile) => {
+        if (tile?.tileId) {
+          forceBottomByTile.set(tile.tileId, true);
+        }
+      });
+    });
+    return forceBottomByTile;
+  }
+
+  function chooseMeasuredTileLabelPlacement(tileModel, label, layerRect, bounds, visualObstacleRects, placedLabelRects, sharedSide, forceBottom) {
+    if (forceBottom) {
+      const bottomCandidate = getTileLabelCandidate(tileModel, "bottom");
+      const measuredBottom = applyMeasuredLabelCandidate(label, bottomCandidate, layerRect, bounds);
+      return {
+        ...bottomCandidate,
+        anchor: measuredBottom.anchor,
+        rect: measuredBottom.rect,
+        score: Number.NEGATIVE_INFINITY
+      };
+    }
+
     const placements = sharedSide
       ? ["bottom", sharedSide, sharedSide === "right" ? "left" : "right", "top"]
-      : ["bottom", "top", "right", "left"];
+      : ["bottom", "right", "left", "top"];
+
+    const bottomCandidate = getTileLabelCandidate(tileModel, "bottom");
+    const measuredBottom = applyMeasuredLabelCandidate(label, bottomCandidate, layerRect, bounds);
+    const bottomScore = scoreMeasuredLabelRect(
+      measuredBottom.rect,
+      bounds,
+      visualObstacleRects,
+      placedLabelRects,
+      "bottom",
+      0,
+      tileModel.tileId
+    );
+    if (bottomScore < 1200) {
+      return {
+        ...bottomCandidate,
+        anchor: measuredBottom.anchor,
+        rect: measuredBottom.rect,
+        score: bottomScore
+      };
+    }
 
     let best = null;
     placements.forEach((placement, index) => {
       const candidate = getTileLabelCandidate(tileModel, placement);
-      const rect = applyMeasuredLabelCandidate(label, candidate, layerRect);
-      const score = scoreMeasuredLabelRect(rect, bounds, visualObstacleRects, placedLabelRects, index, tileModel.tileId);
+      const measured = applyMeasuredLabelCandidate(label, candidate, layerRect, bounds);
+      const score = scoreMeasuredLabelRect(measured.rect, bounds, visualObstacleRects, placedLabelRects, placement, index, tileModel.tileId);
       if (!best || score < best.score) {
-        best = { ...candidate, rect, score };
+        best = { ...candidate, anchor: measured.anchor, rect: measured.rect, score };
       }
     });
 
@@ -730,6 +1005,14 @@
     return "";
   }
 
+  function getProjectMetaFromTile(tile) {
+    const projectId = tile.getAttribute("data-mu-project-id") || "";
+    if (!projectId) {
+      return null;
+    }
+    return projectMetaById[projectId] || null;
+  }
+
   function ensureProjectLabelLayer() {
     const projectsRoot = document.getElementById("projects");
     if (!projectsRoot) {
@@ -757,7 +1040,6 @@
     }
 
     const tiles = Array.from(projectsRoot.querySelectorAll(".farm-tile-project"));
-    const obstacleTiles = Array.from(projectsRoot.querySelectorAll(".farm-tile-project, .farm-tile-add"));
     const existing = new Map();
     Array.from(layer.querySelectorAll(".mu-ground-label")).forEach((el) => {
       const id = el.getAttribute("data-tile-id");
@@ -807,21 +1089,6 @@
       });
     });
 
-    const tileRects = obstacleTiles.map((tile, index) => {
-      const tileId = tile.dataset.muTileId || `obstacle-${index}`;
-      if (!tile.dataset.muTileId) {
-        tile.dataset.muTileId = tileId;
-      }
-      const left = tile.offsetLeft;
-      const top = tile.offsetTop;
-      return {
-        tileId,
-        x: left,
-        y: top,
-        width: tile.offsetWidth || 120,
-        height: tile.offsetHeight || 90
-      };
-    });
     const bounds = {
       width: projectsRoot.clientWidth || projectsRoot.offsetWidth || 0,
       height: projectsRoot.clientHeight || projectsRoot.offsetHeight || 0
@@ -829,6 +1096,7 @@
     const visualObstacleRects = getProjectVisualObstacleRects(projectsRoot);
     const placedLabelRects = [];
     const sharedSideByTile = getClusterSharedSideByTile(tileModels, bounds);
+    const forceBottomByTile = getHorizontalClusterForceBottomByTile(tileModels);
 
     tileModels
       .slice()
@@ -851,6 +1119,15 @@
           lineNode.textContent = line;
           inner.appendChild(lineNode);
         });
+
+        const tileMeta = getProjectMetaFromTile(tileModel.tile);
+        const metaLines = formatLabelMetaLines(tileMeta);
+        metaLines.forEach((metaText) => {
+          const metaNode = document.createElement("span");
+          metaNode.className = "mu-ground-label-meta";
+          metaNode.textContent = metaText;
+          inner.appendChild(metaNode);
+        });
         label.appendChild(inner);
         label.setAttribute("title", tileModel.rawTitle);
 
@@ -862,7 +1139,8 @@
           bounds,
           visualObstacleRects,
           placedLabelRects,
-          sharedSideByTile.get(tileModel.tileId)
+          sharedSideByTile.get(tileModel.tileId),
+          forceBottomByTile.get(tileModel.tileId)
         );
 
         if (chosenPlacement) {
@@ -893,7 +1171,7 @@
   }
 
   async function hydrateProjectTitlesFromKnownIds() {
-    if (Object.keys(projectTitleById).length > 0) {
+    if (Object.keys(projectTitleById).length > 0 && Object.keys(projectMetaById).length > 0) {
       return;
     }
 
@@ -903,6 +1181,7 @@
     }
 
     const mergedTitles = { ...projectTitleById };
+    const mergedMeta = { ...projectMetaById };
     for (const projectId of ids) {
       try {
         const html = await fetchProjectHtml(projectId);
@@ -913,6 +1192,11 @@
         if (title) {
           mergedTitles[String(projectId)] = title;
         }
+        const metrics = parseProjectMetricsFromHtml(html);
+        const meta = buildProjectMeta(title, metrics);
+        if (meta) {
+          mergedMeta[String(projectId)] = meta;
+        }
       } catch (_err) {
         continue;
       }
@@ -921,6 +1205,8 @@
     if (Object.keys(mergedTitles).length > 0) {
       projectTitleById = mergedTitles;
       writeProjectTitleCache(projectTitleById);
+      projectMetaById = mergedMeta;
+      writeProjectLabelMetaCache(projectMetaById);
       queueProjectGroundLabelsSync();
     }
   }
@@ -1527,50 +1813,28 @@
   }
 
   async function computeWeightedGoldPerHourFromProjects() {
+    await bootstrapProjectIdsFromHiddenHarvestOnce();
+    const discoveredFromDom = getProjectIdsFromDomLinks(document);
+    if (discoveredFromDom.length) {
+      mergeKnownProjectIds(discoveredFromDom);
+    }
     const projectIds = getKnownProjectIds();
     if (!projectIds.length) {
-      let harvested = await requestBackgroundHarvest();
-      if (!harvested.length && ALLOW_VISIBLE_FALLBACK_HARVEST) {
-        harvested = await harvestProjectMetricsFromFarmTiles();
-      }
-      if (!harvested.length) {
-        return null;
-      }
-
-      let weightedRateSum = 0;
-      let totalHours = 0;
-      const harvestedIds = [];
-      const mergedTitles = { ...projectTitleById };
-      harvested.forEach((metrics) => {
-        weightedRateSum += metrics.hours * metrics.goldPerHour;
-        totalHours += metrics.hours;
-        harvestedIds.push(metrics.projectId);
-        if (metrics.title) {
-          mergedTitles[String(metrics.projectId)] = String(metrics.title).trim();
+      if (ALLOW_VISIBLE_FALLBACK_HARVEST) {
+        const harvested = await harvestProjectMetricsFromFarmTiles();
+        if (harvested.length) {
+          projectTileOrder = harvested.map((metrics) => String(metrics.projectId));
+          writeProjectTileOrderCache(projectTileOrder);
+          return computeWeightedGoldPerHourFromProjects();
         }
-      });
-
-      if (Object.keys(mergedTitles).length > Object.keys(projectTitleById).length) {
-        projectTitleById = mergedTitles;
-        writeProjectTitleCache(projectTitleById);
       }
-      projectTileOrder = harvestedIds.map((id) => String(id));
-      writeProjectTileOrderCache(projectTileOrder);
-      queueProjectGroundLabelsSync();
-
-      if (totalHours <= 0 || weightedRateSum <= 0) {
-        return null;
-      }
-      return {
-        effectiveGoldPerHour: weightedRateSum / totalHours,
-        projectIds: harvestedIds,
-        totalHours
-      };
+      return null;
     }
 
     let weightedRateSum = 0;
     let totalHours = 0;
     const mergedTitles = { ...projectTitleById };
+    const mergedMeta = { ...projectMetaById };
 
     for (const projectId of projectIds) {
       try {
@@ -1586,6 +1850,10 @@
         if (!metrics) {
           continue;
         }
+        const meta = buildProjectMeta(title, metrics);
+        if (meta) {
+          mergedMeta[String(projectId)] = meta;
+        }
         weightedRateSum += metrics.hours * metrics.goldPerHour;
         totalHours += metrics.hours;
       } catch (_err) {
@@ -1597,19 +1865,97 @@
       return null;
     }
 
+    let shouldResyncLabels = false;
+
     if (Object.keys(mergedTitles).length > Object.keys(projectTitleById).length) {
       projectTitleById = mergedTitles;
       writeProjectTitleCache(projectTitleById);
+      shouldResyncLabels = true;
+    }
+    if (Object.keys(mergedMeta).length > 0) {
+      const beforeMeta = JSON.stringify(projectMetaById);
+      const afterMeta = JSON.stringify(mergedMeta);
+      projectMetaById = mergedMeta;
+      writeProjectLabelMetaCache(projectMetaById);
+      if (beforeMeta !== afterMeta) {
+        shouldResyncLabels = true;
+      }
+    }
+    if (shouldResyncLabels) {
       queueProjectGroundLabelsSync();
     }
-    projectTileOrder = projectIds.map((id) => String(id));
-    writeProjectTileOrderCache(projectTileOrder);
 
     return {
       effectiveGoldPerHour: weightedRateSum / totalHours,
       projectIds,
       totalHours
     };
+  }
+
+  async function refreshProjectLabelMeta() {
+    const now = Date.now();
+    if (projectMetaRefreshInFlight || now - lastProjectMetaRefreshAt < PROJECT_LABEL_META_REFRESH_MS) {
+      return;
+    }
+    projectMetaRefreshInFlight = true;
+
+    try {
+      await bootstrapProjectIdsFromHiddenHarvestOnce();
+      const discoveredFromDom = getProjectIdsFromDomLinks(document);
+      if (discoveredFromDom.length) {
+        mergeKnownProjectIds(discoveredFromDom);
+      }
+      const projectIds = getKnownProjectIds();
+      if (!projectIds.length) {
+        lastProjectMetaRefreshAt = now;
+        return;
+      }
+
+      const mergedTitles = { ...projectTitleById };
+      const mergedMeta = { ...projectMetaById };
+
+      for (const projectId of projectIds) {
+        try {
+          const html = await fetchProjectHtml(projectId);
+          if (!html) {
+            continue;
+          }
+          const title = parseProjectTitleFromHtml(html);
+          if (title) {
+            mergedTitles[String(projectId)] = title;
+          }
+          const metrics = parseProjectMetricsFromHtml(html);
+          if (!metrics) {
+            continue;
+          }
+          const meta = buildProjectMeta(title, metrics);
+          if (meta) {
+            mergedMeta[String(projectId)] = meta;
+          }
+        } catch (_err) {
+          continue;
+        }
+      }
+
+      const titlesBefore = JSON.stringify(projectTitleById);
+      const titlesAfter = JSON.stringify(mergedTitles);
+      const metaBefore = JSON.stringify(projectMetaById);
+      const metaAfter = JSON.stringify(mergedMeta);
+
+      if (titlesBefore !== titlesAfter) {
+        projectTitleById = mergedTitles;
+        writeProjectTitleCache(projectTitleById);
+      }
+      if (metaBefore !== metaAfter) {
+        projectMetaById = mergedMeta;
+        writeProjectLabelMetaCache(projectMetaById);
+        queueProjectGroundLabelsSync();
+      }
+
+      lastProjectMetaRefreshAt = Date.now();
+    } finally {
+      projectMetaRefreshInFlight = false;
+    }
   }
 
   function formatHours(hours) {
@@ -1670,6 +2016,7 @@
       const cached = readCachedRate();
       if (cached) {
         effectiveGoldPerHour = cached.effectiveGoldPerHour;
+        refreshProjectLabelMeta();
         if (pendingRender) {
           pendingRender = false;
           updateShopCardHours();
@@ -1754,7 +2101,9 @@
   }
 
   projectTitleById = readProjectTitleCache();
+  projectMetaById = readProjectLabelMetaCache();
   projectTileOrder = readProjectTileOrderCache();
+  projectIdsBootstrapped = readProjectIdBootstrapCache();
   if (!projectTileOrder.length) {
     const fromTitles = Object.keys(projectTitleById);
     if (fromTitles.length) {
@@ -1762,6 +2111,10 @@
     } else {
       projectTileOrder = readProjectIdsFromRateCache();
     }
+  }
+  if (projectTileOrder.length) {
+    projectIdsBootstrapped = true;
+    writeProjectIdBootstrapCache(true);
   }
 
   document.addEventListener("pointerdown", trackCreateTilePointerDown, true);
@@ -1774,7 +2127,11 @@
   updateShopCardHours();
   queueProjectGroundLabelsSync();
   hydrateProjectTitlesFromKnownIds();
+  refreshProjectLabelMeta();
   refreshEffectiveRate();
+  setInterval(() => {
+    refreshProjectLabelMeta();
+  }, PROJECT_LABEL_META_REFRESH_MS);
   setInterval(() => {
     refreshEffectiveRate();
   }, PROJECT_CACHE_TTL_MS);
@@ -1784,14 +2141,17 @@
   }, msUntilNextLocalMidnight());
 
   window.addEventListener("focus", () => {
+    refreshProjectLabelMeta();
     refreshEffectiveRate();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
+      refreshProjectLabelMeta();
       refreshEffectiveRate();
     }
   });
   window.addEventListener("load", () => {
+    refreshProjectLabelMeta();
     refreshEffectiveRate();
   });
   console.log(`${DEBUG_PREFIX} content script loaded`);

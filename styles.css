@@ -413,10 +413,26 @@
 
 #macondo-utils-project-label-layer .mu-ground-label {
   position: absolute;
-  width: 126px;
-  transform: translateX(-50%);
+  width: 150px;
   text-align: center;
   user-select: none;
+}
+
+#macondo-utils-project-label-layer .mu-ground-label[data-placement='bottom'],
+#macondo-utils-project-label-layer .mu-ground-label[data-placement='top'] {
+  transform: translateX(-50%);
+}
+
+#macondo-utils-project-label-layer .mu-ground-label[data-placement='right'] {
+  width: 130px;
+  transform: translateY(-50%);
+  text-align: left;
+}
+
+#macondo-utils-project-label-layer .mu-ground-label[data-placement='left'] {
+  width: 130px;
+  transform: translate(-100%, -50%);
+  text-align: right;
 }
 
 #macondo-utils-project-label-layer .mu-ground-label-inner {
@@ -437,12 +453,31 @@
     0 0 6px rgba(222, 214, 152, 0.18);
 }
 
+#macondo-utils-project-label-layer .mu-ground-label[data-placement='left'] .mu-ground-label-inner,
+#macondo-utils-project-label-layer .mu-ground-label[data-placement='right'] .mu-ground-label-inner {
+  transform: rotate(-14deg);
+}
+
 #macondo-utils-project-label-layer .mu-ground-label-line {
   display: block;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#macondo-utils-project-label-layer .mu-ground-label-meta {
+  display: block;
+  margin-top: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0;
+  opacity: 0.78;
 }
 
 @media (max-width: 700px) {

@@ -2,6 +2,11 @@
 
 const BG_PREFIX = "[Macondo Utils BG]";
 const HARVEST_TIMEOUT_MS = 30000;
+const HARVEST_RESULT_TTL_MS = 45000;
+
+let harvestRunInFlight = null;
+let lastHarvestMetrics = [];
+let lastHarvestAt = 0;
 
 function waitForTabComplete(tabId, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
@@ -65,6 +70,30 @@ async function runHiddenHarvest() {
   }
 }
 
+async function runHiddenHarvestSingleFlight() {
+  const now = Date.now();
+  if (lastHarvestMetrics.length && now - lastHarvestAt < HARVEST_RESULT_TTL_MS) {
+    return lastHarvestMetrics;
+  }
+
+  if (harvestRunInFlight) {
+    return harvestRunInFlight;
+  }
+
+  harvestRunInFlight = (async () => {
+    const metrics = await runHiddenHarvest();
+    lastHarvestMetrics = Array.isArray(metrics) ? metrics : [];
+    lastHarvestAt = Date.now();
+    return lastHarvestMetrics;
+  })();
+
+  try {
+    return await harvestRunInFlight;
+  } finally {
+    harvestRunInFlight = null;
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "macondo-utils-run-hidden-harvest") {
     return;
@@ -72,7 +101,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   (async () => {
     try {
-      const metrics = await runHiddenHarvest();
+      const metrics = await runHiddenHarvestSingleFlight();
       sendResponse({ ok: true, metrics });
     } catch (error) {
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
