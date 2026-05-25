@@ -480,6 +480,93 @@
   opacity: 0.78;
 }
 
+#macondo-utils-project-label-settings.mu-label-settings {
+  position: relative;
+  pointer-events: auto;
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 12px;
+  border: 3px solid #6f4f2b;
+  background: rgba(247, 228, 188, 0.92);
+  color: #5a3e23;
+  cursor: pointer;
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-btn:hover {
+  background: rgba(247, 228, 188, 0.92);
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-gear {
+  width: 20px;
+  height: 20px;
+  filter: drop-shadow(0 1px 0 rgba(255, 248, 228, 0.45));
+}
+
+@media (min-width: 640px) {
+  #macondo-utils-project-label-settings .mu-label-settings-btn {
+    height: 38px;
+  }
+}
+
+@media (min-width: 768px) {
+  #macondo-utils-project-label-settings .mu-label-settings-btn {
+    height: 46px;
+    padding: 0 16px;
+  }
+
+  #macondo-utils-project-label-settings .mu-label-settings-gear {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-btn:hover {
+  background: rgba(255, 238, 205, 0.96);
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 210px;
+  padding: 12px 14px;
+  border: 3px solid #6f4f2b;
+  background: rgba(247, 228, 188, 0.985);
+  color: #5a3e23;
+  z-index: 20;
+  box-shadow: 0 10px 24px rgba(44, 26, 10, 0.24);
+  backdrop-filter: blur(2px);
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.35;
+  margin: 6px 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-row input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: #6f4f2b;
+  cursor: pointer;
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-row span {
+  color: #5a3e23;
+}
+
 @media (max-width: 700px) {
   #macondo-utils-create-modal .mu-card {
     padding: 16px 14px 14px;
