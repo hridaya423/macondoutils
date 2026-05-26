@@ -10,6 +10,7 @@ Quality-of-life browser extension for Macondo.
 - Settings menu in the top bar to configure labels metadata, goals HUD visibilty.
 - Shop goals HUD with actual/projected progress, quantity controls.
 - See streak info directly on hover, instead of being redirected to another page, and see statistics such as average daily time, today's time, and a chart showing past 14 days timeline.
+- See time left to complete today's streak on the button.
 
 ## Installation
 
