@@ -17,6 +17,7 @@
   const PROJECT_CACHE_KEY = "macondo_utils_project_rates";
   const PROJECT_TILE_ORDER_CACHE_KEY = "macondo_utils_project_tile_order";
   const PROJECT_ID_BOOTSTRAP_CACHE_KEY = "macondo_utils_project_id_bootstrap";
+  const PROJECT_OWNER_NAME_CACHE_KEY = "macondo_utils_owner_name";
   const PROJECT_LABEL_PREFS_CACHE_KEY = "macondo_utils_project_label_prefs";
   const PROJECT_GOALS_CACHE_KEY = "macondo_utils_project_goals";
   const PROJECT_GOALS_ORDER_SYNC_CACHE_KEY = "macondo_utils_project_goals_order_sync";
@@ -44,6 +45,7 @@
   let projectMetaRefreshInFlight = false;
   let lastProjectMetaRefreshAt = 0;
   let projectIdsBootstrapped = false;
+  let currentOwnerName = "";
   let projectTitleById = {};
   let projectMetaById = {};
   let projectTileOrder = [];
@@ -140,6 +142,30 @@
     }
 
     return parseMultiplierFromText((node.textContent || "").replace("×", "x"));
+  }
+
+  function normalizeOwnerName(name) {
+    return String(name || "").trim().toLowerCase();
+  }
+
+  function readOwnerNameCache() {
+    return String(localStorage.getItem(PROJECT_OWNER_NAME_CACHE_KEY) || "").trim();
+  }
+
+  function writeOwnerNameCache(name) {
+    const normalized = String(name || "").trim();
+    currentOwnerName = normalized;
+    if (normalized) {
+      localStorage.setItem(PROJECT_OWNER_NAME_CACHE_KEY, normalized);
+      return;
+    }
+    localStorage.removeItem(PROJECT_OWNER_NAME_CACHE_KEY);
+  }
+
+  function isOwnedByCurrentOwnerName(ownerName) {
+    const current = normalizeOwnerName(currentOwnerName);
+    const owner = normalizeOwnerName(ownerName);
+    return Boolean(current && owner && current === owner);
   }
 
   function getCurrentGoldPerHourFromModal() {
@@ -292,6 +318,12 @@
     ) || null;
   }
 
+  function getProfileModalElement() {
+    return Array.from(document.querySelectorAll(".modal-frame")).find((modal) =>
+      Boolean(modal.querySelector("a[href='/profile']"))
+    ) || null;
+  }
+
   function parseProjectTitleFromModalElement(modal) {
     if (!modal) {
       return "";
@@ -309,6 +341,26 @@
       .find((value) => value.length > 1 && !/^back to farm$/i.test(value));
 
     return title || "";
+  }
+
+  function parseProjectOwnerNameFromModalElement(modal) {
+    if (!modal) {
+      return "";
+    }
+    const ownerLink = modal.querySelector("a[href^='/u/'] span") || modal.querySelector("a[href^='/u/']");
+    const raw = String(ownerLink?.textContent || "").trim();
+    return raw.replace(/^by\s+/i, "").trim();
+  }
+
+  function parseCurrentOwnerNameFromProfileModal(modal) {
+    if (!modal) {
+      return "";
+    }
+    const heading = Array.from(modal.querySelectorAll("h1, h2, h3")).find((node) => {
+      const text = String(node.textContent || "").trim();
+      return text.length > 1 && !/linked accounts|invite friends|project streaks|notification preferences|stats|my projects/i.test(text);
+    });
+    return String(heading?.textContent || "").trim();
   }
 
   function parseMetricsFromOpenModal() {
@@ -332,7 +384,27 @@
     }
 
     const title = parseProjectTitleFromModalElement(modal);
-    return { projectId, title, ...metrics };
+    const ownerName = parseProjectOwnerNameFromModalElement(modal);
+    return { projectId, title, ownerName, ...metrics };
+  }
+
+  async function closeAnyOpenModal() {
+    if (!getOpenModalElement()) {
+      return;
+    }
+
+    const backButton = Array.from(document.querySelectorAll(".modal-frame button")).find((button) =>
+      /Back to farm/i.test(button.textContent || "")
+    );
+    if (backButton) {
+      backButton.click();
+      await waitFor(() => !getOpenModalElement(), 2000, 80);
+      return;
+    }
+
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true });
+    document.dispatchEvent(esc);
+    await waitFor(() => !getOpenModalElement(), 1500, 80);
   }
 
   async function closeOpenModal() {
@@ -355,6 +427,30 @@
     await waitFor(() => !getProjectModalElement(), 1500, 80);
   }
 
+  async function bootstrapCurrentOwnerNameFromHouseModal() {
+    if (currentOwnerName) {
+      return currentOwnerName;
+    }
+
+    const houseArea = document.querySelector(".house-area");
+    if (!(houseArea instanceof HTMLElement)) {
+      return "";
+    }
+
+    if (getOpenModalElement()) {
+      await closeAnyOpenModal();
+    }
+
+    houseArea.click();
+    const profileModal = await waitFor(() => getProfileModalElement(), 3000, 80);
+    const ownerName = parseCurrentOwnerNameFromProfileModal(profileModal);
+    if (ownerName) {
+      writeOwnerNameCache(ownerName);
+    }
+    await closeAnyOpenModal();
+    return currentOwnerName;
+  }
+
   async function harvestProjectMetricsFromFarmTiles() {
     if (harvestInFlight) {
       return [];
@@ -362,6 +458,8 @@
     harvestInFlight = true;
 
     try {
+      await bootstrapCurrentOwnerNameFromHouseModal();
+
       const tiles = await waitFor(() => {
         const found = Array.from(document.querySelectorAll("#projects .farm-tile-project"));
         return found.length ? found : null;
@@ -437,6 +535,11 @@
       return null;
     }
 
+    const ownedHarvested = harvested.filter((metrics) => isOwnedByCurrentOwnerName(metrics?.ownerName));
+    if (!ownedHarvested.length) {
+      return null;
+    }
+
     const markBootstrapped = options?.markBootstrapped !== false;
     let weightedRateSum = 0;
     let totalHours = 0;
@@ -446,7 +549,7 @@
     const titlesBefore = JSON.stringify(projectTitleById);
     const metaBefore = JSON.stringify(projectMetaById);
 
-    harvested.forEach((metrics) => {
+    ownedHarvested.forEach((metrics) => {
       weightedRateSum += (metrics.hours || 0) * (metrics.goldPerHour || 0);
       totalHours += metrics.hours || 0;
       harvestedIds.push(String(metrics.projectId));
@@ -483,19 +586,24 @@
       queueProjectGroundLabelsSync();
     }
 
-    if (totalHours > 0 && weightedRateSum > 0) {
-      effectiveGoldPerHour = weightedRateSum / totalHours;
+    const recomputed = applyEffectiveGoldPerHourFromMeta(mergedMeta, harvestedIds)
+      || (totalHours > 0 && weightedRateSum > 0
+        ? { effectiveGoldPerHour: weightedRateSum / totalHours, totalHours, projectIds: harvestedIds }
+        : null);
+
+    if (recomputed) {
+      effectiveGoldPerHour = recomputed.effectiveGoldPerHour;
       writeCache({
         timestamp: Date.now(),
         effectiveGoldPerHour,
-        totalHours,
-        projectIds: harvestedIds
+        totalHours: recomputed.totalHours,
+        projectIds: recomputed.projectIds
       });
     }
 
     return {
-      effectiveGoldPerHour: totalHours > 0 && weightedRateSum > 0 ? weightedRateSum / totalHours : null,
-      totalHours,
+      effectiveGoldPerHour: recomputed?.effectiveGoldPerHour || null,
+      totalHours: recomputed?.totalHours || 0,
       projectIds: harvestedIds
     };
   }
@@ -577,7 +685,45 @@
       streakDays,
       estCoins,
       totalEarnedGold: fallbackTotalEarnedGold,
-      futureCoins
+      futureCoins,
+      goldPerHour: Number.isFinite(Number(fallbackMeta?.goldPerHour)) ? Number(fallbackMeta.goldPerHour) : null
+    };
+  }
+
+  function isOwnedProjectApiRecord(project) {
+    if (!project || typeof project !== "object") {
+      return false;
+    }
+    if (project.viewer_is_owner === true) {
+      return true;
+    }
+    return isOwnedByCurrentOwnerName(project?.owner?.username);
+  }
+
+  function applyEffectiveGoldPerHourFromMeta(metaById, projectIds) {
+    const ids = Array.isArray(projectIds) ? projectIds : [];
+    let weightedRateSum = 0;
+    let totalHours = 0;
+
+    ids.forEach((projectId) => {
+      const meta = metaById?.[String(projectId)];
+      const hours = Number(meta?.hours);
+      const goldPerHour = Number(meta?.goldPerHour);
+      if (!Number.isFinite(hours) || hours <= 0 || !Number.isFinite(goldPerHour) || goldPerHour <= 0) {
+        return;
+      }
+      weightedRateSum += hours * goldPerHour;
+      totalHours += hours;
+    });
+
+    if (totalHours <= 0 || weightedRateSum <= 0) {
+      return null;
+    }
+
+    return {
+      effectiveGoldPerHour: weightedRateSum / totalHours,
+      totalHours,
+      projectIds: ids.map((id) => String(id))
     };
   }
 
@@ -590,6 +736,13 @@
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") {
+        return null;
+      }
+      const cachedOwnerName = normalizeOwnerName(parsed.ownerName);
+      if (!cachedOwnerName) {
+        return null;
+      }
+      if (normalizeOwnerName(currentOwnerName) && cachedOwnerName !== normalizeOwnerName(currentOwnerName)) {
         return null;
       }
       if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_HARVEST_TTL_MS) {
@@ -605,7 +758,10 @@
   }
 
   function writeCache(payload) {
-    localStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(payload));
+    localStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify({
+      ...payload,
+      ownerName: currentOwnerName || ""
+    }));
   }
 
   function readProjectLabelPrefsCache() {
@@ -779,7 +935,8 @@
       streakDays,
       estCoins,
       totalEarnedGold,
-      futureCoins
+      futureCoins,
+      goldPerHour: Number.isFinite(metrics.goldPerHour) ? Number(metrics.goldPerHour) : null
     };
   }
 
@@ -831,6 +988,13 @@
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.projectIds)) {
+        return [];
+      }
+      const cachedOwnerName = normalizeOwnerName(parsed.ownerName);
+      if (!cachedOwnerName) {
+        return [];
+      }
+      if (normalizeOwnerName(currentOwnerName) && cachedOwnerName !== normalizeOwnerName(currentOwnerName)) {
         return [];
       }
       return parsed.projectIds.map((id) => String(id));
@@ -2286,7 +2450,7 @@
       for (const projectId of projectIds) {
         try {
           const project = await fetchProjectApi(projectId);
-          if (!project) {
+          if (!project || !isOwnedProjectApiRecord(project)) {
             continue;
           }
           const title = String(project.name || "").trim();
@@ -2312,6 +2476,19 @@
       }
       if (metaBefore !== metaAfter) {
         projectMetaById = mergedMeta;
+        const recomputed = applyEffectiveGoldPerHourFromMeta(projectMetaById, projectIds);
+        if (recomputed) {
+          effectiveGoldPerHour = recomputed.effectiveGoldPerHour;
+          writeCache({
+            timestamp: Date.now(),
+            effectiveGoldPerHour: recomputed.effectiveGoldPerHour,
+            totalHours: recomputed.totalHours,
+            projectIds: recomputed.projectIds
+          });
+          updateShopCardHours();
+          queueGoalsMiniRender();
+          refreshGoalOrderStatus();
+        }
       }
       if (titlesBefore !== titlesAfter || metaBefore !== metaAfter) {
         queueProjectGroundLabelsSync();
@@ -3095,6 +3272,7 @@
     return;
   }
 
+  currentOwnerName = readOwnerNameCache();
   projectTitleById = {};
   projectMetaById = {};
   projectLabelPrefs = readProjectLabelPrefsCache();
