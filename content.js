@@ -14,14 +14,17 @@
   };
 
   const SHOP_CARD_SELECTOR = "[data-flip-id]";
-  const PROJECT_CACHE_KEY = "macondo_utils_project_rates_v1";
-  const PROJECT_TITLE_CACHE_KEY = "macondo_utils_project_titles_v1";
-  const PROJECT_TILE_ORDER_CACHE_KEY = "macondo_utils_project_tile_order_v1";
-  const PROJECT_LABEL_META_CACHE_KEY = "macondo_utils_project_label_meta_v1";
-  const PROJECT_ID_BOOTSTRAP_CACHE_KEY = "macondo_utils_project_id_bootstrap_v1";
-  const PROJECT_LABEL_PREFS_CACHE_KEY = "macondo_utils_project_label_prefs_v1";
+  const PROJECT_CACHE_KEY = "macondo_utils_project_rates";
+  const PROJECT_TITLE_CACHE_KEY = "macondo_utils_project_titles";
+  const PROJECT_TILE_ORDER_CACHE_KEY = "macondo_utils_project_tile_order";
+  const PROJECT_LABEL_META_CACHE_KEY = "macondo_utils_project_label_meta";
+  const PROJECT_ID_BOOTSTRAP_CACHE_KEY = "macondo_utils_project_id_bootstrap";
+  const PROJECT_LABEL_PREFS_CACHE_KEY = "macondo_utils_project_label_prefs";
+  const PROJECT_GOALS_CACHE_KEY = "macondo_utils_project_goals";
+  const PROJECT_GOALS_ORDER_SYNC_CACHE_KEY = "macondo_utils_project_goals_order_sync";
   const PROJECT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
+  const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
   let effectiveGoldPerHour = null;
   let refreshInFlight = false;
@@ -46,10 +49,24 @@
   let projectTitleById = {};
   let projectMetaById = {};
   let projectTileOrder = [];
+  let projectGoals = [];
+  let goalOrderedItemIds = new Set();
+  let goalOrderSyncInFlight = false;
+  let lastGoalOrderSyncAt = 0;
+  let goalsMiniQueued = false;
+  let lastGoalsMiniSignature = "";
+  let goalsViewMode = "actual";
+  let suppressedObserverMutations = 0;
   let projectLabelPrefs = {
     showHours: true,
     showStreak: true,
-    showEstCoins: true
+    showEstCoins: true,
+    showGoalsHud: true,
+    goalsViewMode: "actual",
+    showHudGoalsStat: true,
+    showHudProgressStat: true,
+    showHudRemainingStat: true,
+    showHudEtaStat: true
   };
   const LEVEL_META = {
     software: {
@@ -69,6 +86,27 @@
   function parseFloatSafe(text) {
     const n = Number.parseFloat(String(text).replace(/[^0-9.]/g, ""));
     return Number.isFinite(n) ? n : null;
+  }
+
+
+  function escapeHtml(text) {
+    return String(text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function withObserverSuppressed(fn) {
+    suppressedObserverMutations += 1;
+    try {
+      return fn();
+    } finally {
+      queueMicrotask(() => {
+        suppressedObserverMutations = Math.max(0, suppressedObserverMutations - 1);
+      });
+    }
   }
 
   function parseLevelFromText(text) {
@@ -232,7 +270,22 @@
   }
 
   function getOpenModalElement() {
-    return document.querySelector(".modal-frame");
+    const modals = Array.from(document.querySelectorAll(".modal-frame"));
+    const visible = modals
+      .slice()
+      .reverse()
+      .find((modal) => {
+        if (!(modal instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = modal.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          return false;
+        }
+        const style = window.getComputedStyle(modal);
+        return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+      });
+    return visible || modals[0] || null;
   }
 
   function getProjectModalElement() {
@@ -546,17 +599,43 @@
   function readProjectLabelPrefsCache() {
     const raw = localStorage.getItem(PROJECT_LABEL_PREFS_CACHE_KEY);
     if (!raw) {
-      return { showHours: true, showStreak: true, showEstCoins: true };
+      return {
+        showHours: true,
+        showStreak: true,
+        showEstCoins: true,
+        showGoalsHud: true,
+        goalsViewMode: "actual",
+        showHudGoalsStat: true,
+        showHudProgressStat: true,
+        showHudRemainingStat: true,
+        showHudEtaStat: true
+      };
     }
     try {
       const parsed = JSON.parse(raw);
       return {
         showHours: parsed?.showHours !== false,
         showStreak: parsed?.showStreak !== false,
-        showEstCoins: parsed?.showEstCoins !== false
+        showEstCoins: parsed?.showEstCoins !== false,
+        showGoalsHud: parsed?.showGoalsHud !== false,
+        goalsViewMode: parsed?.goalsViewMode === "projected" ? "projected" : "actual",
+        showHudGoalsStat: parsed?.showHudGoalsStat !== false,
+        showHudProgressStat: parsed?.showHudProgressStat !== false,
+        showHudRemainingStat: parsed?.showHudRemainingStat !== false,
+        showHudEtaStat: parsed?.showHudEtaStat !== false
       };
     } catch (_err) {
-      return { showHours: true, showStreak: true, showEstCoins: true };
+      return {
+        showHours: true,
+        showStreak: true,
+        showEstCoins: true,
+        showGoalsHud: true,
+        goalsViewMode: "actual",
+        showHudGoalsStat: true,
+        showHudProgressStat: true,
+        showHudRemainingStat: true,
+        showHudEtaStat: true
+      };
     }
   }
 
@@ -565,7 +644,13 @@
       timestamp: Date.now(),
       showHours: prefs.showHours !== false,
       showStreak: prefs.showStreak !== false,
-      showEstCoins: prefs.showEstCoins !== false
+      showEstCoins: prefs.showEstCoins !== false,
+      showGoalsHud: prefs.showGoalsHud !== false,
+      goalsViewMode: prefs.goalsViewMode === "projected" ? "projected" : "actual",
+      showHudGoalsStat: prefs.showHudGoalsStat !== false,
+      showHudProgressStat: prefs.showHudProgressStat !== false,
+      showHudRemainingStat: prefs.showHudRemainingStat !== false,
+      showHudEtaStat: prefs.showHudEtaStat !== false
     }));
   }
 
@@ -586,6 +671,80 @@
     localStorage.setItem(PROJECT_ID_BOOTSTRAP_CACHE_KEY, JSON.stringify({
       timestamp: Date.now(),
       done: Boolean(done)
+    }));
+  }
+
+  function normalizeGoal(raw) {
+    if (!raw || typeof raw !== "object") {
+      return null;
+    }
+    const name = String(raw.name || "").trim();
+    const quantity = Math.max(1, Math.round(Number(raw.quantity) || 1));
+    const unitGold = Math.max(0, Math.round(Number(raw.unitGold) || 0));
+    const itemIdNum = Number(raw.itemId);
+    const itemId = Number.isFinite(itemIdNum) && itemIdNum > 0 ? itemIdNum : null;
+    if (!name || unitGold <= 0) {
+      return null;
+    }
+    return {
+      id: String(raw.id || `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`),
+      itemId,
+      name,
+      quantity,
+      unitGold,
+      imageUrl: String(raw.imageUrl || "").trim(),
+      createdAt: Number(raw.createdAt) || Date.now()
+    };
+  }
+
+  function readGoalsCache() {
+    const raw = localStorage.getItem(PROJECT_GOALS_CACHE_KEY);
+    if (!raw) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const goals = Array.isArray(parsed?.goals) ? parsed.goals : [];
+      return goals.map(normalizeGoal).filter(Boolean);
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function writeGoalsCache(goals) {
+    const normalized = Array.isArray(goals) ? goals.map(normalizeGoal).filter(Boolean) : [];
+    localStorage.setItem(PROJECT_GOALS_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      goals: normalized
+    }));
+  }
+
+  function readGoalOrderSyncCache() {
+    const raw = localStorage.getItem(PROJECT_GOALS_ORDER_SYNC_CACHE_KEY);
+    if (!raw) {
+      return { itemIds: [], timestamp: 0 };
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      const itemIds = Array.isArray(parsed?.itemIds)
+        ? parsed.itemIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+        : [];
+      return {
+        itemIds,
+        timestamp: Number(parsed?.timestamp) || 0
+      };
+    } catch (_err) {
+      return { itemIds: [], timestamp: 0 };
+    }
+  }
+
+  function writeGoalOrderSyncCache(itemIds) {
+    const normalized = Array.isArray(itemIds)
+      ? itemIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
+      : [];
+    localStorage.setItem(PROJECT_GOALS_ORDER_SYNC_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      itemIds: normalized
     }));
   }
 
@@ -1075,6 +1234,123 @@
     }
   }
 
+  function positionProjectLabelSettingsPanel(button, panel) {
+    if (!(button instanceof HTMLElement) || !(panel instanceof HTMLElement)) {
+      return;
+    }
+    const rect = button.getBoundingClientRect();
+    const panelWidth = 260;
+    const left = Math.max(12, Math.min(window.innerWidth - panelWidth - 12, rect.right - panelWidth));
+    panel.style.position = "fixed";
+    panel.style.top = `${Math.round(rect.bottom + 8)}px`;
+    panel.style.left = `${Math.round(left)}px`;
+    panel.style.right = "auto";
+  }
+
+  function renderGoalSettingsPanel(panel) {
+    if (!(panel instanceof HTMLElement)) {
+      return;
+    }
+    const goalList = panel.querySelector(".mu-goals-list");
+    if (goalList instanceof HTMLElement) {
+      const nextMarkup = "";
+      if (goalList.innerHTML !== nextMarkup) {
+        withObserverSuppressed(() => {
+          goalList.innerHTML = nextMarkup;
+        });
+      }
+    }
+  }
+
+  function adjustGoalQuantity(goalId, delta) {
+    const id = String(goalId || "");
+    const amount = Math.round(Number(delta) || 0);
+    if (!id || !amount) {
+      return;
+    }
+    const idx = projectGoals.findIndex((goal) => goal.id === id);
+    if (idx < 0) {
+      return;
+    }
+    const current = projectGoals[idx];
+    projectGoals[idx] = {
+      ...current,
+      quantity: Math.max(1, (Number(current.quantity) || 1) + amount)
+    };
+    writeGoalsCache(projectGoals);
+    const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
+    if (panel instanceof HTMLElement && !panel.hidden) {
+      renderGoalSettingsPanel(panel);
+    }
+    syncAllShopCardGoalControls();
+    queueGoalsMiniRender();
+  }
+
+  function removeGoalById(goalId) {
+    const id = String(goalId || "");
+    if (!id) {
+      return;
+    }
+    const nextGoals = projectGoals.filter((goal) => goal.id !== id);
+    if (nextGoals.length === projectGoals.length) {
+      return;
+    }
+    projectGoals = nextGoals;
+    writeGoalsCache(projectGoals);
+    const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
+    if (panel instanceof HTMLElement && !panel.hidden) {
+      renderGoalSettingsPanel(panel);
+    }
+    syncAllShopCardGoalControls();
+    queueGoalsMiniRender();
+  }
+
+  function handleGoalActionElement(action) {
+    if (!(action instanceof HTMLElement)) {
+      return false;
+    }
+    const removeId = String(action.getAttribute("data-goal-remove") || "");
+    if (removeId) {
+      removeGoalById(removeId);
+      return true;
+    }
+    const goalId = String(action.getAttribute("data-goal-id") || "");
+    const delta = Number(action.getAttribute("data-goal-qty-adjust") || "0");
+    if (!goalId || !delta) {
+      return false;
+    }
+    if (delta < 0) {
+      const goal = projectGoals.find((entry) => entry.id === goalId);
+      if (goal && (Number(goal.quantity) || 1) <= 1) {
+        removeGoalById(goalId);
+        return true;
+      }
+    }
+    adjustGoalQuantity(goalId, delta);
+    return true;
+  }
+
+  function handleGoalsModeToggle(action) {
+    if (!(action instanceof HTMLElement)) {
+      return false;
+    }
+    const mode = String(action.getAttribute("data-goals-mode") || "").toLowerCase();
+    if (mode !== "actual" && mode !== "projected") {
+      return false;
+    }
+    if (goalsViewMode === mode) {
+      return true;
+    }
+    goalsViewMode = mode;
+    projectLabelPrefs = {
+      ...projectLabelPrefs,
+      goalsViewMode: mode
+    };
+    writeProjectLabelPrefsCache(projectLabelPrefs);
+    queueGoalsMiniRender();
+    return true;
+  }
+
   function ensureProjectLabelSettingsButton() {
     let root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);  
     const target = document.querySelector("[class*='absolute'][class*='top-0'] [class*='ml-auto'], [class*='absolute'][class*='top-0'] [class*='items-center'][class*='justify-between'] > div:last-child");
@@ -1112,15 +1388,29 @@
       panel.className = "mu-label-settings-panel";
       panel.hidden = true;
       panel.innerHTML = [
+        "<div class='mu-label-settings-heading'>Project labels</div>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHours' checked /> <span>Show time</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showStreak' checked /> <span>Show streak</span></label>",
-        "<label class='mu-label-settings-row'><input type='checkbox' data-key='showEstCoins' checked /> <span>Show est coins</span></label>"
+        "<label class='mu-label-settings-row'><input type='checkbox' data-key='showEstCoins' checked /> <span>Show est coins</span></label>",
+        "<div class='mu-goals-settings'>",
+        "<div class='mu-label-settings-heading'>Dashboard</div>",
+        "<label class='mu-label-settings-row'><input type='checkbox' data-key='showGoalsHud' checked /> <span>Show HUD in dashboard</span></label>",
+        "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudGoalsStat' checked /> <span>Show goals box</span></label>",
+        "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudProgressStat' checked /> <span>Show progress box</span></label>",
+        "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudRemainingStat' checked /> <span>Show remaining box</span></label>",
+        "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudEtaStat' checked /> <span>Show ETA box</span></label>",
+        "<div class='mu-goals-list'></div>",
+        "</div>"
       ].join("");
 
       button.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
         panel.hidden = !panel.hidden;
+        if (!panel.hidden) {
+          positionProjectLabelSettingsPanel(button, panel);
+          renderGoalSettingsPanel(panel);
+        }
       });
 
       panel.addEventListener("click", (event) => {
@@ -1139,6 +1429,25 @@
         };
         writeProjectLabelPrefsCache(projectLabelPrefs);
         queueProjectGroundLabelsSync();
+        if (key === "showGoalsHud") {
+          queueGoalsMiniRender();
+        }
+      });
+
+      panel.addEventListener("click", (event) => {
+        const targetNode = event.target instanceof HTMLElement ? event.target : null;
+        if (!targetNode) {
+          return;
+        }
+        const removeButton = targetNode.closest("[data-goal-remove]");
+        if (removeButton instanceof HTMLElement) {
+          handleGoalActionElement(removeButton);
+          return;
+        }
+        const qtyAdjust = targetNode.closest("[data-goal-qty-adjust][data-goal-id]");
+        if (qtyAdjust instanceof HTMLElement) {
+          handleGoalActionElement(qtyAdjust);
+        }
       });
 
       root.appendChild(button);
@@ -1159,6 +1468,14 @@
         }
         input.checked = projectLabelPrefs[key] !== false;
       });
+
+    if (!panel.hidden) {
+      const button = root.querySelector(".mu-label-settings-btn");
+      if (button instanceof HTMLElement) {
+        positionProjectLabelSettingsPanel(button, panel);
+      }
+      renderGoalSettingsPanel(panel);
+    }
   }
 
   function syncProjectGroundLabels() {
@@ -2105,9 +2422,616 @@
     return `${wholeHours}h ${minutes}m`;
   }
 
+  function formatEtaHours(hours) {
+    if (!Number.isFinite(hours) || hours <= 0) {
+      return "0m";
+    }
+    return formatHours(hours);
+  }
+
+  function getProjectedExtras() {
+    const projectedCoins = Object.values(projectMetaById || {}).reduce((sum, meta) => {
+      const coins = Number(meta?.futureCoins);
+      return sum + (Number.isFinite(coins) && coins > 0 ? coins : 0);
+    }, 0);
+    const rate = effectiveGoldPerHour || 0;
+    const projectedHours = rate > 0 ? projectedCoins / rate : 0;
+    return {
+      coins: Math.max(0, Math.round(projectedCoins)),
+      hours: Math.max(0, projectedHours)
+    };
+  }
+
+  function parseCurrentGoldFromHeader() {
+    const moneyImages = Array.from(document.querySelectorAll("img[src*='money']"));
+    for (const moneyImg of moneyImages) {
+      const container = moneyImg.closest("div");
+      const textNode = container
+        ? Array.from(container.querySelectorAll("span")).find((span) => /\d/.test(span.textContent || ""))
+        : null;
+      const value = parseFloatSafe(textNode?.textContent || container?.textContent || "");
+      if (Number.isFinite(value) && value >= 0) {
+        return Math.round(value);
+      }
+    }
+    return 0;
+  }
+
+  function findGoalsHudMount() {
+    function isVisibleElement(node) {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return false;
+      }
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      return true;
+    }
+
+    function findCurrencyRow(root) {
+      if (!(root instanceof Element)) {
+        return null;
+      }
+      const rows = Array.from(root.querySelectorAll("div")).filter((node) => {
+        const text = String(node.textContent || "").toLowerCase();
+        return text.includes("your gold")
+          && text.includes("your starfruit")
+          && node.querySelector("img[src*='money']")
+          && node.querySelector("img[src*='starfruit']");
+      });
+      const visibleRows = rows.filter((node) => isVisibleElement(node));
+      if (!visibleRows.length) {
+        return rows[0] || null;
+      }
+      visibleRows.sort((a, b) => {
+        const ar = a.getBoundingClientRect();
+        const br = b.getBoundingClientRect();
+        const areaA = ar.width * ar.height;
+        const areaB = br.width * br.height;
+        return areaA - areaB;
+      });
+      return visibleRows[0] || null;
+    }
+
+    const openModal = getOpenModalElement();
+    const modalCurrencyRow = findCurrencyRow(openModal);
+    if (modalCurrencyRow && modalCurrencyRow.parentElement) {
+      return {
+        mount: modalCurrencyRow.parentElement,
+        afterNode: modalCurrencyRow,
+        mode: "currency-row"
+      };
+    }
+
+    const currencyRow = findCurrencyRow(document);
+    if (currencyRow && currencyRow.parentElement) {
+      return {
+        mount: currencyRow.parentElement,
+        afterNode: currencyRow,
+        mode: "currency-row"
+      };
+    }
+
+    const topOverlays = Array.from(document.querySelectorAll("[class*='absolute'][class*='top-0'][class*='left-0'][class*='right-0']"));
+    const topOverlay = topOverlays.find((node) => isVisibleElement(node)) || topOverlays[0] || null;
+    const topRow = topOverlay?.querySelector("[class*='justify-between']");
+    if (topOverlay) {
+      return {
+        mount: topOverlay,
+        afterNode: topRow || null,
+        mode: "top-overlay"
+      };
+    }
+
+    return null;
+  }
+
+  function queueGoalsMiniRender() {
+    if (goalsMiniQueued) {
+      return;
+    }
+    goalsMiniQueued = true;
+    requestAnimationFrame(() => {
+      goalsMiniQueued = false;
+      renderGoalsMiniBox();
+    });
+  }
+
+  function shouldRefreshGoalsFromMutations(records) {
+    if (!projectGoals.length || !Array.isArray(records) || !records.length) {
+      return false;
+    }
+
+    const isRelevantNode = (node) => {
+      if (!(node instanceof Element)) {
+        return false;
+      }
+      if (node.closest("#macondo-utils-goals-mini")) {
+        return false;
+      }
+      if (node.matches(".modal-frame, [data-flip-id], [class*='absolute'][class*='top-0'][class*='left-0'][class*='right-0']")) {
+        return true;
+      }
+      if (node.querySelector(".modal-frame, [data-flip-id], [class*='absolute'][class*='top-0'][class*='left-0'][class*='right-0']")) {
+        return true;
+      }
+      const text = String(node.textContent || "").toLowerCase();
+      return text.includes("your gold") || text.includes("your starfruit");
+    };
+
+    return records.some((record) => {
+      const target = record.target instanceof Element ? record.target : null;
+      if (target && target.closest("#macondo-utils-goals-mini")) {
+        return false;
+      }
+      if (isRelevantNode(target)) {
+        return true;
+      }
+      return Array.from(record.addedNodes || []).some((node) => isRelevantNode(node))
+        || Array.from(record.removedNodes || []).some((node) => isRelevantNode(node));
+    });
+  }
+
+  function handleShopStarToggleClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const button = target.closest("button[aria-label*='Star'], button[aria-label*='Unstar']");
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+    const card = button.closest(SHOP_CARD_SELECTOR);
+    const candidate = getGoalCandidateFromCard(card);
+    if (!candidate) {
+      return;
+    }
+    const label = String(button.getAttribute("aria-label") || button.title || "").toLowerCase();
+    if (label.includes("unstar")) {
+      removeGoalByItemOrName(candidate);
+    } else if (label.includes("star")) {
+      upsertGoal(candidate);
+      refreshGoalOrderStatus();
+    }
+  }
+
+  function handleGoalsMiniActionClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const action = target.closest("#macondo-utils-goals-mini [data-goal-qty-adjust][data-goal-id], #macondo-utils-goals-mini [data-goal-remove]");
+    if (!(action instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    handleGoalActionElement(action);
+  }
+
+  function getShopItemsFromCards() {
+    const items = [];
+    const seen = new Set();
+    const cards = Array.from(document.querySelectorAll(SHOP_CARD_SELECTOR));
+    cards.forEach((card) => {
+      const title = String(card.querySelector("h2, h3, h4, p")?.textContent || "").trim();
+      const goldSpan = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
+      const unitGold = Math.max(0, Math.round(parseFloatSafe(goldSpan?.textContent || "") || 0));
+      const imageUrl = String(card.querySelector("img")?.getAttribute("src") || "");
+      const itemIdMatch = String(card.getAttribute("data-flip-id") || "").match(/(\d+)/);
+      const itemId = itemIdMatch?.[1] ? Number(itemIdMatch[1]) : null;
+      if (!title || unitGold <= 0) {
+        return;
+      }
+      const key = `${itemId || "x"}-${title}-${unitGold}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      items.push({
+        id: itemId,
+        name: title,
+        unitGold,
+        imageUrl
+      });
+    });
+    return items;
+  }
+
+  function getGoalCandidateFromCard(card) {
+    if (!(card instanceof Element)) {
+      return null;
+    }
+    const title = String(card.querySelector("h2, h3, h4")?.textContent || "").trim();
+    const goldSpan = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
+    const unitGold = Math.max(0, Math.round(parseFloatSafe(goldSpan?.textContent || "") || 0));
+    const imageUrl = String(card.querySelector("img[alt]")?.getAttribute("src") || "");
+    const itemIdMatch = String(card.getAttribute("data-flip-id") || "").match(/(\d+)/);
+    const itemId = itemIdMatch?.[1] ? Number(itemIdMatch[1]) : null;
+    if (!title || unitGold <= 0) {
+      return null;
+    }
+    return {
+      itemId,
+      name: title,
+      unitGold,
+      quantity: 1,
+      imageUrl
+    };
+  }
+
+  function getGoalForCandidate(candidate) {
+    if (!candidate) {
+      return null;
+    }
+    return projectGoals.find((goal) => {
+      if (candidate.itemId && goal.itemId) {
+        return candidate.itemId === goal.itemId;
+      }
+      return goal.name.toLowerCase() === String(candidate.name || "").trim().toLowerCase();
+    }) || null;
+  }
+
+  function renderShopCardGoalControls(card) {
+    if (!(card instanceof Element)) {
+      return;
+    }
+    const candidate = getGoalCandidateFromCard(card);
+    const buyButton = card.querySelector("button[class*='ds-btn-primary']");
+    const actionsWrap = buyButton?.parentElement;
+    if (!candidate || !(actionsWrap instanceof HTMLElement)) {
+      return;
+    }
+
+    const goal = getGoalForCandidate(candidate);
+    const qty = goal ? Math.max(1, Number(goal.quantity) || 1) : 1;
+    let controls = actionsWrap.querySelector(".mu-shop-goal-controls");
+    if (!controls) {
+      withObserverSuppressed(() => {
+        controls = document.createElement("div");
+        controls.className = "mu-shop-goal-controls";
+        const firstChild = actionsWrap.firstElementChild;
+        if (firstChild) {
+          firstChild.insertAdjacentElement("beforebegin", controls);
+        } else {
+          actionsWrap.appendChild(controls);
+        }
+      });
+    }
+    const nextMarkup = `
+      <button type='button' class='mu-shop-goal-btn' data-goal-card-adjust='-1' data-goal-card-item='${candidate.itemId || ""}'>-</button>
+      <span class='mu-shop-goal-qty'>x${qty}</span>
+      <button type='button' class='mu-shop-goal-btn' data-goal-card-adjust='1' data-goal-card-item='${candidate.itemId || ""}'>+</button>
+    `;
+    if (controls.innerHTML !== nextMarkup) {
+      withObserverSuppressed(() => {
+        controls.innerHTML = nextMarkup;
+      });
+    }
+    controls.dataset.goalCardItem = candidate.itemId ? String(candidate.itemId) : "";
+    controls.dataset.goalCardName = candidate.name;
+    controls.dataset.goalCardGold = String(candidate.unitGold);
+    controls.dataset.goalCardImage = candidate.imageUrl || "";
+  }
+
+  function syncAllShopCardGoalControls() {
+    document.querySelectorAll(SHOP_CARD_SELECTOR).forEach((card) => renderShopCardGoalControls(card));
+  }
+
+  function handleShopCardGoalActionClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const action = target.closest("[data-goal-card-adjust][data-goal-card-item]");
+    if (!(action instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    const cardItemId = Number(action.getAttribute("data-goal-card-item") || "0");
+    const controls = action.closest(".mu-shop-goal-controls");
+    const candidate = {
+      itemId: Number.isFinite(cardItemId) && cardItemId > 0 ? cardItemId : null,
+      name: String(controls?.getAttribute("data-goal-card-name") || ""),
+      unitGold: Number(controls?.getAttribute("data-goal-card-gold") || "0"),
+      quantity: 1,
+      imageUrl: String(controls?.getAttribute("data-goal-card-image") || "")
+    };
+    const goal = getGoalForCandidate(candidate);
+    const delta = Number(action.getAttribute("data-goal-card-adjust") || "0");
+    if (delta > 0) {
+      if (goal) {
+        adjustGoalQuantity(goal.id, 1);
+      } else {
+        upsertGoal(candidate);
+      }
+      return;
+    }
+    if (!goal) {
+      return;
+    }
+    if ((Number(goal.quantity) || 1) <= 1) {
+      removeGoalById(goal.id);
+      return;
+    }
+    adjustGoalQuantity(goal.id, -1);
+  }
+
+  function upsertGoal(goalInput) {
+    const normalized = normalizeGoal(goalInput);
+    if (!normalized) {
+      return;
+    }
+    const existingIndex = projectGoals.findIndex((goal) => {
+      if (normalized.itemId && goal.itemId) {
+        return goal.itemId === normalized.itemId;
+      }
+      return goal.name.toLowerCase() === normalized.name.toLowerCase();
+    });
+    if (existingIndex >= 0) {
+      projectGoals[existingIndex] = {
+        ...projectGoals[existingIndex],
+        unitGold: normalized.unitGold,
+        imageUrl: normalized.imageUrl || projectGoals[existingIndex].imageUrl
+      };
+    } else {
+      projectGoals.push(normalized);
+    }
+    writeGoalsCache(projectGoals);
+    const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
+    if (panel instanceof HTMLElement && !panel.hidden) {
+      renderGoalSettingsPanel(panel);
+    }
+    syncAllShopCardGoalControls();
+    queueGoalsMiniRender();
+  }
+
+  function removeGoalByItemOrName(goalInput) {
+    const itemId = Number(goalInput?.itemId);
+    const name = String(goalInput?.name || "").trim().toLowerCase();
+    const next = projectGoals.filter((goal) => {
+      if (Number.isFinite(itemId) && itemId > 0 && goal.itemId) {
+        return goal.itemId !== itemId;
+      }
+      if (name) {
+        return goal.name.toLowerCase() !== name;
+      }
+      return true;
+    });
+    if (next.length === projectGoals.length) {
+      return;
+    }
+    projectGoals = next;
+    writeGoalsCache(projectGoals);
+    const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
+    if (panel instanceof HTMLElement && !panel.hidden) {
+      renderGoalSettingsPanel(panel);
+    }
+    syncAllShopCardGoalControls();
+    queueGoalsMiniRender();
+  }
+
+  function pruneCompletedGoalsByOrders() {
+    if (!projectGoals.length || !goalOrderedItemIds.size) {
+      return false;
+    }
+    const nextGoals = projectGoals.filter((goal) => !goal.itemId || !goalOrderedItemIds.has(goal.itemId));
+    if (nextGoals.length === projectGoals.length) {
+      return false;
+    }
+    projectGoals = nextGoals;
+    writeGoalsCache(projectGoals);
+    return true;
+  }
+
+  async function refreshGoalOrderStatus() {
+    if (goalOrderSyncInFlight) {
+      return;
+    } 
+    if (!projectGoals.some((goal) => goal.itemId)) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastGoalOrderSyncAt < PROJECT_GOALS_ORDER_SYNC_MS) {
+      return;
+    }
+    goalOrderSyncInFlight = true;
+    try {
+      const response = await fetch("/api/shop/my-orders", { credentials: "include" });
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      const itemIds = Array.isArray(payload)
+        ? payload
+          .map((entry) => Number(entry?.order?.item_id || entry?.item?.id))
+          .filter((id) => Number.isFinite(id) && id > 0)
+        : [];
+      goalOrderedItemIds = new Set(itemIds);
+      lastGoalOrderSyncAt = Date.now();
+      writeGoalOrderSyncCache(itemIds);
+      if (pruneCompletedGoalsByOrders()) {
+        ensureProjectLabelSettingsButton();
+      }
+      renderGoalsMiniBox();
+    } catch (_err) {
+      return;
+    } finally {
+      goalOrderSyncInFlight = false;
+    }
+  }
+
+  function renderGoalsMiniBox() {
+    const existing = document.getElementById("macondo-utils-goals-mini");
+    if (projectLabelPrefs.showGoalsHud === false || !projectGoals.length) {
+      if (existing) {
+        existing.remove();
+      }
+      lastGoalsMiniSignature = "";
+      return;
+    }
+    const mountInfo = findGoalsHudMount();
+    if (!mountInfo?.mount) {
+      return;
+    }
+    const { mount, afterNode, mode } = mountInfo;
+    let box = existing;
+    if (!box) {
+      withObserverSuppressed(() => {
+        box = document.createElement("div");
+        box.id = "macondo-utils-goals-mini";
+        box.className = "mu-goals-mini";
+        if (afterNode && afterNode.parentElement === mount) {
+          afterNode.insertAdjacentElement("afterend", box);
+        } else {
+          mount.appendChild(box);
+        }
+      });
+    } else if (afterNode && box.previousElementSibling !== afterNode) {
+      withObserverSuppressed(() => {
+        afterNode.insertAdjacentElement("afterend", box);
+      });
+    } else if (box.parentElement !== mount) {
+      withObserverSuppressed(() => {
+        mount.appendChild(box);
+      });
+    }
+    if (box.getAttribute("data-mode") !== mode) {
+      withObserverSuppressed(() => {
+        box.setAttribute("data-mode", mode);
+      });
+    }
+
+    const currentGold = parseCurrentGoldFromHeader();
+    const projected = getProjectedExtras();
+    const projectedCoins = goalsViewMode === "projected" ? projected.coins : 0;
+    const displayGold = currentGold + projectedCoins;
+    const rate = effectiveGoldPerHour || 0;
+    const sorted = projectGoals.slice().sort((a, b) => a.createdAt - b.createdAt);
+    const totalTargetGold = sorted.reduce((sum, goal) => sum + (goal.unitGold * goal.quantity), 0);
+    const totalProgressGold = Math.max(0, displayGold);
+    const totalRemainingGold = Math.max(0, totalTargetGold - totalProgressGold);
+    const boundedProgressGold = Math.max(0, Math.min(totalProgressGold, totalTargetGold));
+    const totalProgressPct = totalTargetGold > 0
+      ? Math.max(0, Math.min(100, Math.round((boundedProgressGold / totalTargetGold) * 100)))
+      : 0;
+    const boundedActualGold = Math.max(0, Math.min(currentGold, totalTargetGold));
+    const actualProgressPct = totalTargetGold > 0
+      ? Math.max(0, Math.min(100, Math.round((boundedActualGold / totalTargetGold) * 100)))
+      : 0;
+    const projectedSegmentPct = Math.max(0, totalProgressPct - actualProgressPct);
+    const totalEta = formatEtaHours(rate > 0 ? totalRemainingGold / rate : 0);
+
+    const rows = sorted.slice(0, 6).map((goal) => {
+      const targetGold = goal.unitGold * goal.quantity;
+      const remainingGold = Math.max(0, targetGold - displayGold);
+      const pct = targetGold > 0 ? Math.max(0, Math.min(100, Math.round((displayGold / targetGold) * 100))) : 0;
+      const hours = formatEtaHours(rate > 0 ? remainingGold / rate : 0);
+      const unit = goal.unitGold > 0 ? `${goal.unitGold} each` : "";
+      const thumb = goal.imageUrl ? `<img class='mu-goal-mini-thumb' src='${escapeHtml(goal.imageUrl)}' alt='${escapeHtml(goal.name)}' />` : "";
+      return `
+        <div class='mu-goal-mini-pill'>
+          <div class='mu-goal-mini-item-main'>
+            ${thumb}
+            <div class='mu-goal-mini-item-text'>
+              <div class='mu-goal-mini-name'>${escapeHtml(goal.name)}</div>
+              <div class='mu-goal-mini-sub'>${displayGold}/${targetGold} gold • ${hours}</div>
+            </div>
+          </div>
+          <div class='mu-goal-mini-controls'>
+            <div class='mu-goal-mini-pct-chip'>${pct}%</div>
+            <button type='button' class='mu-goal-mini-btn' data-goal-qty-adjust='-1' data-goal-id='${escapeHtml(goal.id)}'>-</button>
+            <span class='mu-goal-mini-qty'>x${goal.quantity}</span>
+            <button type='button' class='mu-goal-mini-btn' data-goal-qty-adjust='1' data-goal-id='${escapeHtml(goal.id)}'>+</button>
+            <button type='button' class='mu-goal-mini-btn remove' data-goal-remove='${escapeHtml(goal.id)}' aria-label='Remove goal' title='Remove goal'>×</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+    const statsMarkup = [
+      projectLabelPrefs.showHudGoalsStat !== false ? `<div class='mu-goals-mini-stat'><span>Goals</span><strong>${sorted.length}</strong></div>` : "",
+      projectLabelPrefs.showHudProgressStat !== false ? `<div class='mu-goals-mini-stat'><span>Progress</span><strong>${totalProgressGold}/${totalTargetGold}</strong></div>` : "",
+      projectLabelPrefs.showHudRemainingStat !== false ? `<div class='mu-goals-mini-stat'><span>Remaining</span><strong>${totalRemainingGold}</strong></div>` : "",
+      projectLabelPrefs.showHudEtaStat !== false ? `<div class='mu-goals-mini-stat'><span>ETA</span><strong>${totalEta}</strong></div>` : ""
+    ].filter(Boolean).join("");
+    const nextMarkup = `
+      <div class='mu-goals-mini-title-row'>
+        <div class='mu-goals-mini-title'>Goals</div>
+        <div class='mu-goals-mini-pct'>${totalProgressPct}%</div>
+      </div>
+      <div class='mu-goals-mini-mode'>
+        <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "actual" ? " active" : ""}' data-goals-mode='actual'>Actual</button>
+        <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "projected" ? " active" : ""}' data-goals-mode='projected'>Projected</button>
+      </div>
+      <div class='mu-goals-mini-progress' role='progressbar' aria-valuemin='0' aria-valuemax='${Math.max(1, totalTargetGold)}' aria-valuenow='${boundedProgressGold}' aria-label='Goals progress'>
+        <span class='mu-goals-mini-progress-actual' style='width:${actualProgressPct}%;'></span>
+        <span class='mu-goals-mini-progress-projected${goalsViewMode === "projected" ? " active" : ""}' style='left:${actualProgressPct}%;width:${projectedSegmentPct}%;'></span>
+      </div>
+      ${statsMarkup ? `<div class='mu-goals-mini-stats'>${statsMarkup}</div>` : ""}
+      <div class='mu-goals-mini-list'>${rows}</div>
+    `;
+    const nextSignature = JSON.stringify({
+      mode,
+      goalsViewMode,
+      goals: sorted.map((goal) => ({
+        id: goal.id,
+        quantity: goal.quantity,
+        unitGold: goal.unitGold,
+        imageUrl: goal.imageUrl,
+        name: goal.name
+      })),
+      currentGold,
+      totalProgressPct,
+      actualProgressPct,
+      projectedSegmentPct,
+      totalTargetGold,
+      totalRemainingGold,
+      totalEta,
+      statsMarkup,
+      rows
+    });
+
+    if (lastGoalsMiniSignature !== nextSignature || box.innerHTML !== nextMarkup) {
+      withObserverSuppressed(() => {
+        box.innerHTML = nextMarkup;
+      });
+      lastGoalsMiniSignature = nextSignature;
+    }
+
+    box.onclick = (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) {
+        return;
+      }
+      const action = target.closest("[data-goal-qty-adjust][data-goal-id], [data-goal-remove]");
+      if (!(action instanceof HTMLElement)) {
+        const modeToggle = target.closest("[data-goals-mode]");
+        if (modeToggle instanceof HTMLElement) {
+          event.preventDefault();
+          event.stopPropagation();
+          handleGoalsModeToggle(modeToggle);
+        }
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      handleGoalActionElement(action);
+    };
+  }
+
   function updateShopCardHours() {
     const goldPerHour = effectiveGoldPerHour || getCurrentGoldPerHourFromModal();
     if (!goldPerHour) {
+      document.querySelectorAll(SHOP_CARD_SELECTOR).forEach((card) => renderShopCardGoalControls(card));
       return;
     }
 
@@ -2130,11 +3054,23 @@
 
       const computedHours = goldAmount / goldPerHour;
       if (!Number.isFinite(computedHours) || computedHours <= 0) {
+        renderShopCardGoalControls(card);
         return;
       }
 
-      hoursSpan.textContent = `> ${formatHours(computedHours)}`;
-      hoursSpan.title = `Calculated with ${goldPerHour.toFixed(2)} effective gold/hour`;
+      const nextHoursText = `> ${formatHours(computedHours)}`;
+      const nextHoursTitle = `Calculated with ${goldPerHour.toFixed(2)} effective gold/hour`;
+      if (hoursSpan.textContent !== nextHoursText || hoursSpan.title !== nextHoursTitle) {
+        withObserverSuppressed(() => {
+          if (hoursSpan.textContent !== nextHoursText) {
+            hoursSpan.textContent = nextHoursText;
+          }
+          if (hoursSpan.title !== nextHoursTitle) {
+            hoursSpan.title = nextHoursTitle;
+          }
+        });
+      }
+      renderShopCardGoalControls(card);
       updatedCount += 1;
     });
   }
@@ -2154,6 +3090,8 @@
           pendingRender = false;
           updateShopCardHours();
         }
+        queueGoalsMiniRender();
+        refreshGoalOrderStatus();
         return;
       }
 
@@ -2170,6 +3108,8 @@
         projectIds: computed.projectIds
       });
       updateShopCardHours();
+      queueGoalsMiniRender();
+      refreshGoalOrderStatus();
     } finally {
       refreshInFlight = false;
     }
@@ -2199,10 +3139,16 @@
     });
   }
 
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((records) => {
+    if (suppressedObserverMutations > 0) {
+      return;
+    }
     scheduleRender();
     queueProjectGroundLabelsSync();
     ensureProjectLabelSettingsButton();
+    if (shouldRefreshGoalsFromMutations(records)) {
+      queueGoalsMiniRender();
+    }
     if (hasProjectContextOnPage()) {
       scheduleRefresh("dom-mutation-project-context");
     }
@@ -2237,8 +3183,15 @@
   projectTitleById = readProjectTitleCache();
   projectMetaById = readProjectLabelMetaCache();
   projectLabelPrefs = readProjectLabelPrefsCache();
+  goalsViewMode = projectLabelPrefs.goalsViewMode === "projected" ? "projected" : "actual";
+  projectGoals = readGoalsCache();
   projectTileOrder = readProjectTileOrderCache();
   projectIdsBootstrapped = readProjectIdBootstrapCache();
+  {
+    const goalSyncCached = readGoalOrderSyncCache();
+    goalOrderedItemIds = new Set(goalSyncCached.itemIds);
+    lastGoalOrderSyncAt = goalSyncCached.timestamp || 0;
+  }
   if (!projectTileOrder.length) {
     const fromTitles = Object.keys(projectTitleById);
     if (fromTitles.length) {
@@ -2257,6 +3210,8 @@
   document.addEventListener("pointerup", trackCreateTilePointerUp, true);
   document.addEventListener("pointercancel", trackCreateTilePointerUp, true);
   document.addEventListener("click", maybeInterceptCreateTileClick, true);
+  document.addEventListener("click", handleShopStarToggleClick, true);
+  document.addEventListener("click", handleShopCardGoalActionClick, true);
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target || !target.closest(`#${PROJECT_LABEL_SETTINGS_ID}`)) {
@@ -2264,19 +3219,33 @@
     }
   });
   window.addEventListener("resize", queueProjectGroundLabelsSync);
+  window.addEventListener("resize", queueGoalsMiniRender);
+  window.addEventListener("resize", () => {
+    const root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
+    const panel = root?.querySelector(".mu-label-settings-panel");
+    const button = root?.querySelector(".mu-label-settings-btn");
+    if (panel instanceof HTMLElement && !panel.hidden && button instanceof HTMLElement) {
+      positionProjectLabelSettingsPanel(button, panel);
+    }
+  });
 
   updateShopCardHours();
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
+  queueGoalsMiniRender();
   hydrateProjectTitlesFromKnownIds();
   refreshProjectLabelMeta();
   refreshEffectiveRate();
+  refreshGoalOrderStatus();
   setInterval(() => {
     refreshProjectLabelMeta();
   }, PROJECT_LABEL_META_REFRESH_MS);
   setInterval(() => {
     refreshEffectiveRate();
   }, PROJECT_CACHE_TTL_MS);
+  setInterval(() => {
+    refreshGoalOrderStatus();
+  }, PROJECT_GOALS_ORDER_SYNC_MS);
   setTimeout(function scheduleMidnightRefresh() {
     refreshEffectiveRate();
     setTimeout(scheduleMidnightRefresh, msUntilNextLocalMidnight());

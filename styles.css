@@ -483,12 +483,15 @@
 #macondo-utils-project-label-settings.mu-label-settings {
   position: relative;
   pointer-events: auto;
+  z-index: 400;
 }
 
 #macondo-utils-project-label-settings .mu-label-settings-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  z-index: 401;
   height: 34px;
   padding: 0 12px;
   border: 3px solid #6f4f2b;
@@ -538,9 +541,18 @@
   border: 3px solid #6f4f2b;
   background: rgba(247, 228, 188, 0.985);
   color: #5a3e23;
-  z-index: 20;
+  z-index: 300;
   box-shadow: 0 10px 24px rgba(44, 26, 10, 0.24);
   backdrop-filter: blur(2px);
+}
+
+#macondo-utils-project-label-settings .mu-label-settings-heading {
+  margin: 2px 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 900;
+  color: #6f4f2b;
 }
 
 #macondo-utils-project-label-settings .mu-label-settings-row {
@@ -565,6 +577,422 @@
 
 #macondo-utils-project-label-settings .mu-label-settings-row span {
   color: #5a3e23;
+}
+
+#macondo-utils-project-label-settings .mu-goals-settings {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 2px solid rgba(111, 79, 43, 0.25);
+}
+
+#macondo-utils-project-label-settings .mu-goal-add {
+  display: grid;
+  grid-template-columns: 1fr 64px auto;
+  gap: 6px;
+  align-items: center;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-select,
+#macondo-utils-project-label-settings .mu-goal-qty-input {
+  height: 32px;
+  border: 2px solid #7a5a34;
+  background: #fff8eb;
+  color: #4d341e;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 6px;
+}
+
+#macondo-utils-project-label-settings .mu-goal-add-btn,
+#macondo-utils-project-label-settings .mu-goal-remove-btn {
+  height: 32px;
+  border: 2px solid #6f4f2b;
+  background: #dcbf90;
+  color: #5a3e23;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0 8px;
+}
+
+#macondo-utils-project-label-settings .mu-goals-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item {
+  border: 2px solid rgba(111, 79, 43, 0.35);
+  background: rgba(255, 248, 235, 0.72);
+  padding: 6px;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-name {
+  font-size: 12px;
+  font-weight: 800;
+  color: #5a3e23;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-meta {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: rgba(90, 62, 35, 0.9);
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-qty {
+  font-size: 12px;
+  font-weight: 800;
+  min-width: 28px;
+  text-align: center;
+}
+
+#macondo-utils-project-label-settings .mu-goal-qty-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #7a5a34;
+  background: #f6ebd7;
+  color: #5a3e23;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#macondo-utils-project-label-settings .mu-goals-empty {
+  font-size: 12px;
+  color: rgba(90, 62, 35, 0.8);
+  padding: 4px 0;
+}
+
+.mu-shop-goal-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: -2px;
+}
+
+.mu-shop-goal-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(104, 77, 58, 0.35);
+  background: rgba(242, 216, 183, 0.9);
+  color: #684d3a;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mu-shop-goal-qty {
+  min-width: 26px;
+  text-align: center;
+  color: #684d3a;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+#macondo-utils-goals-mini.mu-goals-mini {
+  position: relative;
+  margin: 12px 8px 0 auto;
+  width: min(520px, calc(100vw - 16px));
+  pointer-events: none;
+  border: 3px solid #7b5a36;
+  background: #eacfb3;
+  box-shadow:
+    inset 0 0 0 1px rgba(245, 229, 195, 0.35),
+    0 8px 18px rgba(58, 37, 15, 0.15);
+  color: #62452a;
+  padding: 10px 12px;
+  z-index: 10;
+}
+
+#macondo-utils-goals-mini.mu-goals-mini * {
+  pointer-events: auto;
+}
+
+#macondo-utils-goals-mini.mu-goals-mini[data-mode='currency-row'] {
+  margin: 12px 0 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-mode {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid rgba(104, 77, 58, 0.28);
+  background: rgba(246, 233, 202, 0.75);
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-mode-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #6a4a2b;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-mode-btn.active {
+  border-color: rgba(104, 77, 58, 0.35);
+  background: rgba(104, 77, 58, 0.12);
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-title {
+  font-size: 16px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: #5f4228;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-pct {
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 0.95;
+  color: #6a4a2b;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-stats {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-stat {
+  border: 2px solid rgba(122, 90, 52, 0.45);
+  background: rgba(243, 226, 198, 0.9);
+  padding: 6px 8px;
+  border-radius: 0;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-stat span {
+  display: block;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.78;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-stat strong {
+  display: block;
+  margin-top: 1px;
+  font-size: 14px;
+  line-height: 1.05;
+  color: #5c4025;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-list {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  border: 2px solid rgba(122, 90, 52, 0.42);
+  border-radius: 10px;
+  background: rgba(243, 226, 198, 0.92);
+  padding: 6px 8px;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-item-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-thumb {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  border: 1px solid rgba(117, 83, 46, 0.35);
+  background: rgba(250, 240, 214, 0.86);
+  border-radius: 999px;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-item-text {
+  min-width: 0;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-name {
+  font-size: 14px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 0.95;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-sub {
+  margin-top: 2px;
+  font-size: 10px;
+  opacity: 0.75;
+  line-height: 1.05;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 2px;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-qty {
+  min-width: 20px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-btn {
+  min-width: 22px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(123, 87, 47, 0.55);
+  background: rgba(246, 233, 202, 0.9);
+  color: #5f4228;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-btn:hover {
+  background: #f6e5c8;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-btn.remove {
+  color: #7c5731;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-pct-chip {
+  font-size: 10px;
+  font-weight: 900;
+  color: #6a4a2b;
+  white-space: nowrap;
+  padding: 0 4px 0 0;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-progress {
+  margin-top: 6px;
+  width: 100%;
+  height: 14px;
+  border: 2px solid rgba(104, 77, 58, 0.35);
+  border-radius: 0;
+  background: rgba(250, 240, 220, 0.95);
+  position: relative;
+  overflow: hidden;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-progress-actual {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: #6ea36b;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-progress-projected {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: none;
+  background-image: repeating-linear-gradient(
+    135deg,
+    #6aa1d9 0,
+    #6aa1d9 6px,
+    #8ab8e6 6px,
+    #8ab8e6 12px
+  );
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-progress-projected.active {
+  display: block;
+}
+
+@media (min-width: 640px) {
+  #macondo-utils-goals-mini.mu-goals-mini {
+    margin-right: 16px;
+  }
+}
+
+@media (max-width: 800px) {
+  #macondo-utils-goals-mini.mu-goals-mini {
+    padding: 10px;
+    width: min(96vw, 420px);
+  }
+
+  #macondo-utils-goals-mini .mu-goals-mini-title {
+    font-size: 15px;
+  }
+
+  #macondo-utils-goals-mini .mu-goals-mini-pct {
+    font-size: 16px;
+  }
+
+  #macondo-utils-goals-mini .mu-goals-mini-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #macondo-utils-goals-mini .mu-goals-mini-stat strong {
+    font-size: 16px;
+  }
+
+  #macondo-utils-goals-mini .mu-goals-mini-list {
+    flex-direction: column;
+  }
+
+  #macondo-utils-goals-mini .mu-goal-mini-pill {
+    width: 100%;
+  }
+
+  #macondo-utils-goals-mini .mu-goal-mini-name {
+    font-size: 12px;
+  }
+
+  #macondo-utils-goals-mini .mu-goal-mini-sub,
+  #macondo-utils-goals-mini .mu-goal-mini-pct-chip {
+    font-size: 10px;
+  }
 }
 
 @media (max-width: 700px) {

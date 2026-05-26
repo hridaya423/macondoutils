@@ -5,7 +5,10 @@ Quality-of-life browser extension for Macondo.
 ## Features
 
 - Replaces shop item time estimates with accurate project-based estimates.
-- Easier one-step project creation
+- Easier one-step project creation.
+- Project ground labels on the farm with project metadata.
+- Settings menu in the top bar to configure labels metadata, goals HUD visibilty.
+- Shop goals HUD with actual/projected progress, quantity controls.
 
 ## Installation
 
