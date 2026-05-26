@@ -9,6 +9,7 @@ Quality-of-life browser extension for Macondo.
 - Project ground labels on the farm with project metadata.
 - Settings menu in the top bar to configure labels metadata, goals HUD visibilty.
 - Shop goals HUD with actual/projected progress, quantity controls.
+- See streak info directly on hover, instead of being redirected to another page, and see statistics such as average daily time, today's time, and a chart showing past 14 days timeline.
 
 ## Installation
 

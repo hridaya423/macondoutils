@@ -21,7 +21,7 @@
   const PROJECT_LABEL_PREFS_CACHE_KEY = "macondo_utils_project_label_prefs";
   const PROJECT_GOALS_CACHE_KEY = "macondo_utils_project_goals";
   const PROJECT_GOALS_ORDER_SYNC_CACHE_KEY = "macondo_utils_project_goals_order_sync";
-  const PROJECT_HARVEST_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+  const PROJECT_RATE_CACHE_TTL_MS = 2 * 60 * 1000;
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
@@ -36,6 +36,7 @@
   const CREATE_TILE_DRAG_THRESHOLD_PX = 6;
   const PROJECT_LABEL_LAYER_ID = "macondo-utils-project-label-layer";
   const PROJECT_LABEL_SETTINGS_ID = "macondo-utils-project-label-settings";
+  const STREAK_HOVER_CARD_ID = "macondo-utils-streak-hover-card";
   const PROJECT_LABEL_TEXT_MAX = 26;
   const CREATE_MODAL_ID = "macondo-utils-create-modal";
   const CREATE_STYLE_ID = "macondo-utils-create-style";
@@ -57,6 +58,9 @@
   let lastGoalsMiniSignature = "";
   let goalsViewMode = "actual";
   let suppressedObserverMutations = 0;
+  let streakHoverCardHideTimer = null;
+  let streakHoverDataPromise = null;
+  let streakHoverData = null;
   let projectLabelPrefs = {
     showHours: true,
     showStreak: true,
@@ -168,6 +172,14 @@
     return Boolean(current && owner && current === owner);
   }
 
+  function isExtensionContextValid() {
+    try {
+      return Boolean(chrome?.runtime?.id);
+    } catch (_err) {
+      return false;
+    }
+  }
+
   function getCurrentGoldPerHourFromModal() {
     const level = parseLevelFromProjectModal();
     if (!level || !PROJECT_HOURLY_RATE[level]) {
@@ -178,19 +190,9 @@
     return PROJECT_HOURLY_RATE[level] * multiplier;
   }
 
-  function findProjectIdsInHtml(html) {
+  function getProjectIdsFromFarmTiles(root = document) {
     const ids = new Set();
-    const regex = /\/projects\/(\d+)/g;
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      ids.add(match[1]);
-    }
-    return ids;
-  }
-
-  function getProjectIdsFromDomLinks(root = document) {
-    const ids = new Set();
-    Array.from(root.querySelectorAll("a[href*='/projects/']")).forEach((link) => {
+    Array.from(root.querySelectorAll("#projects .farm-tile-project a[href*='/projects/']")).forEach((link) => {
       const href = link.getAttribute("href") || "";
       const match = href.match(/\/projects\/(\d+)/);
       if (match?.[1]) {
@@ -200,13 +202,11 @@
     return Array.from(ids).slice(0, PROJECT_FETCH_LIMIT);
   }
 
-  function mergeKnownProjectIds(ids) {
+  function replaceKnownProjectIds(ids) {
     if (!Array.isArray(ids) || !ids.length) {
       return false;
     }
-    const merged = new Set(projectTileOrder.map((id) => String(id)));
-    ids.forEach((id) => merged.add(String(id)));
-    const next = Array.from(merged).slice(0, PROJECT_FETCH_LIMIT);
+    const next = Array.from(new Set(ids.map((id) => String(id)))).slice(0, PROJECT_FETCH_LIMIT);
     const changed = JSON.stringify(next) !== JSON.stringify(projectTileOrder);
     if (changed) {
       projectTileOrder = next;
@@ -217,20 +217,22 @@
 
   function getKnownProjectIds() {
     const ids = new Set();
-    findProjectIdsInHtml(document.documentElement.innerHTML).forEach((id) => ids.add(id));
-    getProjectIdsFromDomLinks(document).forEach((id) => ids.add(id));
-
-    const fromStorage = localStorage.getItem(PROJECT_CACHE_KEY);
-    if (fromStorage) {
-      try {
-        const parsed = JSON.parse(fromStorage);
-        if (Array.isArray(parsed.projectIds)) {
-          parsed.projectIds.forEach((id) => ids.add(String(id)));
-        }
-      } catch (_err) {}
-    }
+    getProjectIdsFromFarmTiles(document).forEach((id) => ids.add(id));
+    projectTileOrder.forEach((id) => ids.add(String(id)));
     const collected = Array.from(ids).slice(0, PROJECT_FETCH_LIMIT);
     return collected;
+  }
+
+  function getVisibleFarmTileCount() {
+    return document.querySelectorAll("#projects .farm-tile-project").length;
+  }
+
+  function sanitizeProjectTileOrderAgainstVisibleTiles() {
+    const visibleTileCount = getVisibleFarmTileCount();
+    if (visibleTileCount > 0 && projectTileOrder.length > visibleTileCount) {
+      projectTileOrder = projectTileOrder.slice(0, visibleTileCount);
+      writeProjectTileOrderCache(projectTileOrder);
+    }
   }
 
   function parseProjectMetricsFromHtml(html) {
@@ -313,9 +315,12 @@
   }
 
   function getProjectModalElement() {
-    return Array.from(document.querySelectorAll(".modal-frame")).find((modal) =>
-      Boolean(modal.querySelector("a[href*='/projects/']"))
-    ) || null;
+    return Array.from(document.querySelectorAll(".modal-frame")).find((modal) => {
+      const hasProjectLink = Boolean(modal.querySelector("a[href*='/projects/']"));
+      const hasOwnerLink = Boolean(modal.querySelector("a[href^='/u/']"));
+      const isProfileModal = Boolean(modal.querySelector("a[href='/profile']"));
+      return hasProjectLink && hasOwnerLink && !isProfileModal;
+    }) || null;
   }
 
   function getProfileModalElement() {
@@ -361,6 +366,23 @@
       return text.length > 1 && !/linked accounts|invite friends|project streaks|notification preferences|stats|my projects/i.test(text);
     });
     return String(heading?.textContent || "").trim();
+  }
+
+  function parseCurrentOwnerNameFromProfileHtml(html) {
+    if (!html) {
+      return "";
+    }
+
+    try {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const heading = Array.from(doc.querySelectorAll("h1, h2, h3")).find((node) => {
+        const text = String(node.textContent || "").trim();
+        return text.length > 1 && !/linked accounts|invite friends|project streaks|notification preferences|stats|my projects|back to farm/i.test(text);
+      });
+      return String(heading?.textContent || "").trim();
+    } catch (_err) {
+      return "";
+    }
   }
 
   function parseMetricsFromOpenModal() {
@@ -432,6 +454,13 @@
       return currentOwnerName;
     }
 
+    const profileHtml = await fetchProfileHtml();
+    const htmlOwnerName = parseCurrentOwnerNameFromProfileHtml(profileHtml);
+    if (htmlOwnerName) {
+      writeOwnerNameCache(htmlOwnerName);
+      return currentOwnerName;
+    }
+
     const houseArea = document.querySelector(".house-area");
     if (!(houseArea instanceof HTMLElement)) {
       return "";
@@ -446,6 +475,8 @@
     const ownerName = parseCurrentOwnerNameFromProfileModal(profileModal);
     if (ownerName) {
       writeOwnerNameCache(ownerName);
+    } else {
+      console.warn(`${DEBUG_PREFIX} failed to bootstrap owner name from profile`);
     }
     await closeAnyOpenModal();
     return currentOwnerName;
@@ -498,27 +529,53 @@
 
   function requestBackgroundHarvest() {
     return new Promise((resolve) => {
-      if (!chrome?.runtime?.sendMessage) {
+      if (!isExtensionContextValid() || typeof chrome?.runtime?.sendMessage !== "function") {
         resolve([]);
         return;
       }
 
-      chrome.runtime.sendMessage({ type: "macondo-utils-run-hidden-harvest" }, (response) => {
-        if (chrome.runtime.lastError) {
+      try {
+        chrome.runtime.sendMessage({ type: "macondo-utils-run-hidden-harvest" }, (response) => {
+          try {
+            if (chrome.runtime.lastError) {
+              resolve([]);
+              return;
+            }
+          } catch (_err) {
+            resolve([]);
+            return;
+          }
+          if (!response?.ok || !Array.isArray(response.metrics)) {
+            resolve([]);
+            return;
+          }
+          resolve(response.metrics);
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/Extension context invalidated/i.test(message)) {
+          console.warn(`${DEBUG_PREFIX} background harvest skipped because extension context was invalidated`);
           resolve([]);
           return;
         }
-        if (!response?.ok || !Array.isArray(response.metrics)) {
-          resolve([]);
-          return;
-        }
-        resolve(response.metrics);
-      });
+        resolve([]);
+      }
     });
   }
 
-  async function bootstrapProjectIdsFromHiddenHarvestOnce() {
-    if (projectIdsBootstrapped || projectTileOrder.length) {
+  async function bootstrapProjectIdsFromHiddenHarvestOnce(force = false) {
+    const discoveredFromDom = getProjectIdsFromFarmTiles(document);
+    if (discoveredFromDom.length) {
+      replaceKnownProjectIds(discoveredFromDom);
+      projectIdsBootstrapped = true;
+      writeProjectIdBootstrapCache(true);
+      return;
+    }
+
+    const visibleTileCount = getVisibleFarmTileCount();
+    const needsInitialHarvest = !projectIdsBootstrapped && !projectTileOrder.length;
+    const needsRecoveryHarvest = force || (visibleTileCount > 0 && projectTileOrder.length > 0 && visibleTileCount > projectTileOrder.length);
+    if (!needsInitialHarvest && !needsRecoveryHarvest) {
       return;
     }
 
@@ -535,11 +592,6 @@
       return null;
     }
 
-    const ownedHarvested = harvested.filter((metrics) => isOwnedByCurrentOwnerName(metrics?.ownerName));
-    if (!ownedHarvested.length) {
-      return null;
-    }
-
     const markBootstrapped = options?.markBootstrapped !== false;
     let weightedRateSum = 0;
     let totalHours = 0;
@@ -549,7 +601,7 @@
     const titlesBefore = JSON.stringify(projectTitleById);
     const metaBefore = JSON.stringify(projectMetaById);
 
-    ownedHarvested.forEach((metrics) => {
+    harvested.forEach((metrics) => {
       weightedRateSum += (metrics.hours || 0) * (metrics.goldPerHour || 0);
       totalHours += metrics.hours || 0;
       harvestedIds.push(String(metrics.projectId));
@@ -614,6 +666,48 @@
       return null;
     }
     return response.json();
+  }
+
+  async function fetchProfileHtml() {
+    const response = await fetch("/profile", { credentials: "include" });
+    if (!response.ok) {
+      return null;
+    }
+    return response.text();
+  }
+
+  async function fetchProfileStreaks() {
+    const response = await fetch("/api/profile/streaks", { credentials: "include" });
+    if (!response.ok) {
+      return null;
+    }
+    return response.json();
+  }
+
+  async function fetchStreakCalendar(month) {
+    const response = await fetch(`/api/streaks/calendar?month=${encodeURIComponent(month)}`, { credentials: "include" });
+    if (!response.ok) {
+      return null;
+    }
+    return response.json();
+  }
+
+  function getYearMonthParts(date) {
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1
+    };
+  }
+
+  function formatYearMonth(parts) {
+    return `${parts.year}-${String(parts.month).padStart(2, "0")}`;
+  }
+
+  function getPreviousYearMonth(parts) {
+    if (parts.month === 1) {
+      return { year: parts.year - 1, month: 12 };
+    }
+    return { year: parts.year, month: parts.month - 1 };
   }
 
   function getProjectGoldPerHourForLevel(level) {
@@ -686,18 +780,422 @@
       estCoins,
       totalEarnedGold: fallbackTotalEarnedGold,
       futureCoins,
-      goldPerHour: Number.isFinite(Number(fallbackMeta?.goldPerHour)) ? Number(fallbackMeta.goldPerHour) : null
+      goldPerHour: Number.isFinite(goldPerHour) ? goldPerHour : null
     };
   }
 
-  function isOwnedProjectApiRecord(project) {
-    if (!project || typeof project !== "object") {
-      return false;
+  function buildStreakHoverData(profileStreaks, streakCalendar) {
+    const safeProfile = profileStreaks && typeof profileStreaks === "object" ? profileStreaks : {};
+    const safeCalendar = streakCalendar && typeof streakCalendar === "object" ? streakCalendar : {};
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const calendarDays = Array.isArray(safeCalendar.days)
+      ? safeCalendar.days.map((day) => ({
+          date: String(day?.day || "").trim(),
+          minutes: Math.max(0, Math.round(Number(day?.seconds_logged || 0) / 60)),
+          lockedIn: ["active", "frozen", "review_protected"].includes(String(day?.status || "")),
+          status: String(day?.status || "pending")
+        })).filter((day) => day.date)
+      : [];
+    const todayEntry = calendarDays.find((day) => day.date === todayIso) || null;
+    const projects = Array.isArray(safeProfile.projects)
+      ? safeProfile.projects.map((project) => ({
+          title: String(project?.name || "").trim(),
+          streakDays: Math.max(0, Math.round(Number(project?.project_streak_days || 0))),
+          workedToday: Boolean(project?.worked_today),
+          autoUseStreakFreezes: project?.auto_use_streak_freezes !== false
+        })).filter((project) => project.title)
+      : [];
+    return {
+      projects,
+      streakFreezesRemaining: Math.max(0, Math.round(Number(safeProfile.streak_freezes_remaining || 0))),
+      todayMinutes: todayEntry?.minutes || 0,
+      todayLockedIn: Boolean(safeProfile.worked_today || todayEntry?.lockedIn),
+      calendarDays
+    };
+  }
+
+  function mergeStreakCalendars(calendars) {
+    const mergedDays = [];
+    const seen = new Set();
+    (Array.isArray(calendars) ? calendars : []).forEach((calendar) => {
+      if (!calendar || !Array.isArray(calendar.days)) {
+        return;
+      }
+      calendar.days.forEach((day) => {
+        const key = String(day?.day || "").trim();
+        if (!key || seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+        mergedDays.push(day);
+      });
+    });
+    mergedDays.sort((a, b) => String(a?.day || "").localeCompare(String(b?.day || "")));
+    return {
+      month: calendars.find((calendar) => calendar?.month)?.month || "",
+      timezone: calendars.find((calendar) => calendar?.timezone)?.timezone || "",
+      days: mergedDays
+    };
+  }
+
+  function renderDashboardStreakProgress(data, button) {
+    if (!(button instanceof HTMLElement)) {
+      return;
     }
-    if (project.viewer_is_owner === true) {
-      return true;
+    const minutes = Math.max(0, Math.round(Number(data?.todayMinutes) || 0));
+    const ratio = Math.max(0, Math.min(1, minutes / 60));
+    const progressText = data?.todayLockedIn ? "locked in" : `${Math.min(minutes, 60)}/60m`;
+    let progress = button.querySelector(".mu-streak-progress");
+    if (!progress) {
+      progress = document.createElement("div");
+      progress.className = "mu-streak-progress";
+      progress.innerHTML = "<div class='mu-streak-progress-bar'></div><div class='mu-streak-progress-label'></div>";
+      progress.style.display = "flex";
+      progress.style.flexDirection = "column";
+      progress.style.gap = "4px";
+      progress.style.minWidth = "56px";
+      const count = button.querySelector("span.text-xs, span.text-sm, span.text-base") || button.lastElementChild;
+      if (count instanceof HTMLElement) {
+        count.insertAdjacentElement("afterend", progress);
+      } else {
+        button.appendChild(progress);
+      }
     }
-    return isOwnedByCurrentOwnerName(project?.owner?.username);
+    const bar = progress.querySelector(".mu-streak-progress-bar");
+    const label = progress.querySelector(".mu-streak-progress-label");
+    if (bar instanceof HTMLElement) {
+      bar.style.width = "56px";
+      bar.style.height = "6px";
+      bar.style.border = "1px solid rgba(104,77,58,0.28)";
+      bar.style.background = `linear-gradient(90deg, #ea580c ${ratio * 100}%, rgba(104,77,58,0.12) ${ratio * 100}%)`;
+    }
+    if (label instanceof HTMLElement) {
+      label.textContent = progressText;
+      label.style.fontSize = "10px";
+      label.style.lineHeight = "1";
+      label.style.fontWeight = "800";
+      label.style.color = "rgba(104,77,58,0.72)";
+      label.style.textTransform = "uppercase";
+      label.style.letterSpacing = "0.04em";
+    }
+  }
+
+  function buildRecentActivitySparkline(recentDays) {
+    const days = Array.isArray(recentDays) ? recentDays : [];
+    if (!days.length) {
+      return "";
+    }
+
+    function roundUpChartMinutes(value) {
+      const minutes = Math.max(60, Math.round(Number(value) || 0));
+      if (minutes <= 60) {
+        return 60;
+      }
+      if (minutes <= 180) {
+        return Math.ceil(minutes / 30) * 30;
+      }
+      return Math.ceil(minutes / 60) * 60;
+    }
+
+    const width = 300;
+    const height = 104;
+    const axisLeft = 36;
+    const axisRight = 10;
+    const top = 12;
+    const bottom = 64;
+    const plottedMaxMinutes = Math.max(60, ...days.map((day) => Math.max(0, Number(day?.minutes) || 0)));
+    const chartMaxMinutes = roundUpChartMinutes(plottedMaxMinutes);
+    const usableWidth = Math.max(1, width - axisLeft - axisRight);
+    const stepX = days.length > 1 ? usableWidth / (days.length - 1) : 0;
+    const points = days.map((day, index) => {
+      const minutes = Math.max(0, Number(day?.minutes) || 0);
+      const x = axisLeft + stepX * index;
+      const ratio = minutes / chartMaxMinutes;
+      const y = bottom - ratio * (bottom - top);
+      return { x, y, minutes, day };
+    });
+    const linePoints = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+    const targetY = bottom - (60 / chartMaxMinutes) * (bottom - top);
+    const maxLabel = formatHours(chartMaxMinutes / 60);
+    const midLabel = formatHours((chartMaxMinutes / 2) / 60);
+    const zeroLabel = "0m";
+    const middleIndex = Math.floor((points.length - 1) / 2);
+    const axisTickIndexes = Array.from(new Set([
+      0,
+      Math.floor((points.length - 1) * 0.25),
+      middleIndex,
+      Math.floor((points.length - 1) * 0.75),
+      points.length - 1
+    ])).filter((index) => index >= 0 && index < points.length);
+
+    function formatAxisDateLabel(dateStr) {
+      if (!dateStr) {
+        return "";
+      }
+      try {
+        const [year, month, day] = String(dateStr).split("-").map((part) => Number(part));
+        const date = new Date(year, (month || 1) - 1, day || 1);
+        return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      } catch (_err) {
+        return String(dateStr).slice(5);
+      }
+    }
+
+    const circles = points.map((point) => {
+      const status = String(point.day?.status || "pending");
+      const fill = status === "active"
+        ? "#f97316"
+        : status === "frozen"
+          ? "#22d3ee"
+          : status === "review_protected" || status === "review"
+            ? "#7dd3fc"
+            : status === "partial"
+              ? "#fde047"
+              : "#cbd5e1";
+      const stroke = status === "active"
+        ? "#c2410c"
+        : status === "frozen"
+          ? "#0e7490"
+          : status === "review_protected" || status === "review"
+            ? "#0369a1"
+            : status === "partial"
+              ? "#ca8a04"
+              : "#94a3b8";
+      return `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" fill="${fill}" stroke="${stroke}" stroke-width="1.5"><title>${escapeHtml(`${point.day.date}: ${point.minutes} min`)}</title></circle>`;
+    }).join("");
+
+    return `
+      <svg viewBox="0 0 ${width} ${height}" width="100%" height="96" role="img" aria-label="Recent activity line chart">
+        <line x1="${axisLeft}" y1="${top}" x2="${axisLeft}" y2="${bottom}" stroke="rgba(104,77,58,0.28)" stroke-width="1.2"></line>
+        <line x1="${axisLeft}" y1="${bottom}" x2="${width - axisRight}" y2="${bottom}" stroke="rgba(104,77,58,0.28)" stroke-width="1.2"></line>
+        <line x1="${axisLeft - 4}" y1="${top}" x2="${axisLeft}" y2="${top}" stroke="rgba(104,77,58,0.28)" stroke-width="1"></line>
+        <line x1="${axisLeft - 4}" y1="${((top + bottom) / 2).toFixed(1)}" x2="${axisLeft}" y2="${((top + bottom) / 2).toFixed(1)}" stroke="rgba(104,77,58,0.22)" stroke-width="1"></line>
+        <line x1="${axisLeft - 4}" y1="${bottom}" x2="${axisLeft}" y2="${bottom}" stroke="rgba(104,77,58,0.28)" stroke-width="1"></line>
+        ${axisTickIndexes.map((index, tickIndex) => {
+          const point = points[index];
+          const opacity = tickIndex === 0 || tickIndex === axisTickIndexes.length - 1 ? 0.28 : 0.22;
+          return `<line x1="${point.x.toFixed(1)}" y1="${bottom}" x2="${point.x.toFixed(1)}" y2="${bottom + 4}" stroke="rgba(104,77,58,${opacity})" stroke-width="1"></line>`;
+        }).join("")}
+        <text x="${axisLeft - 6}" y="${top + 3}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.58)">${escapeHtml(maxLabel)}</text>
+        <text x="${axisLeft - 6}" y="${((top + bottom) / 2) + 3}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.42)">${escapeHtml(midLabel)}</text>
+        <text x="${axisLeft - 6}" y="${bottom + 3}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.42)">${escapeHtml(zeroLabel)}</text>
+        <line x1="${axisLeft}" y1="${targetY.toFixed(1)}" x2="${width - axisRight}" y2="${targetY.toFixed(1)}" stroke="#b08f74" stroke-width="1.5" stroke-dasharray="4 4"></line>
+        <polyline points="${linePoints}" fill="none" stroke="#684d3a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        ${circles}
+        ${axisTickIndexes.map((index, tickIndex) => {
+          const point = points[index];
+          const anchor = tickIndex === 0 ? "start" : tickIndex === axisTickIndexes.length - 1 ? "end" : "middle";
+          const opacity = tickIndex === 0 || tickIndex === axisTickIndexes.length - 1 ? 0.62 : 0.5;
+          return `<text x="${point.x.toFixed(1)}" y="${height - 8}" text-anchor="${anchor}" font-size="10" font-weight="800" fill="rgba(104,77,58,${opacity})">${escapeHtml(formatAxisDateLabel(point.day?.date))}</text>`;
+        }).join("")}
+        <text x="${width - axisRight}" y="${Math.max(10, targetY - 4).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.58)">60m target</text>
+      </svg>
+    `;
+  }
+
+  function getDashboardStreakButton() {
+    return Array.from(document.querySelectorAll("button[title], button[aria-label]")).find((button) => {
+      const text = `${button.getAttribute("title") || ""} ${button.getAttribute("aria-label") || ""}`;
+      return /streak/i.test(text) && button.querySelector("svg");
+    }) || null;
+  }
+
+  function ensureStreakHoverCard() {
+    let card = document.getElementById(STREAK_HOVER_CARD_ID);
+    if (!card) {
+      card = document.createElement("div");
+      card.id = STREAK_HOVER_CARD_ID;
+      card.style.minWidth = "280px";
+      card.style.maxWidth = "360px";
+      card.style.background = "#f6ead2";
+      card.style.border = "3px solid #5c3b20";
+      card.style.boxShadow = "0 16px 36px rgba(74, 48, 24, 0.22)";
+      card.style.borderRadius = "2px";
+      card.style.color = "#5c3b20";
+      card.style.pointerEvents = "auto";
+      card.hidden = true;
+      document.body.appendChild(card);
+      card.addEventListener("mouseenter", () => {
+        if (streakHoverCardHideTimer) {
+          clearTimeout(streakHoverCardHideTimer);
+          streakHoverCardHideTimer = null;
+        }
+      });
+      card.addEventListener("mouseleave", () => hideStreakHoverCard());
+    }
+    return card;
+  }
+
+  function hideStreakHoverCard(immediate = false) {
+    const card = document.getElementById(STREAK_HOVER_CARD_ID);
+    if (!card) {
+      return;
+    }
+    if (streakHoverCardHideTimer) {
+      clearTimeout(streakHoverCardHideTimer);
+      streakHoverCardHideTimer = null;
+    }
+    const hide = () => {
+      card.hidden = true;
+    };
+    if (immediate) {
+      hide();
+      return;
+    }
+    streakHoverCardHideTimer = window.setTimeout(hide, 120);
+  }
+
+  function renderStreakHoverCard(data) {
+    const card = ensureStreakHoverCard();
+    const items = Array.isArray(data?.projects) ? data.projects : [];
+    const streakFreezesRemaining = Math.max(0, Math.round(Number(data?.streakFreezesRemaining) || 0));
+    const recentDays = Array.isArray(data?.calendarDays)
+      ? data.calendarDays.filter((day) => day && day.status !== "pending").slice(-14)
+      : [];
+    const averageRecentMinutes = recentDays.length
+      ? Math.round(recentDays.reduce((sum, day) => sum + (Number(day?.minutes) || 0), 0) / recentDays.length)
+      : 0;
+    const todayMinutes = Math.max(0, Math.round(Number(data?.todayMinutes) || 0));
+    const sparkline = buildRecentActivitySparkline(recentDays);
+    const flameIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;flex-shrink:0;color:#ea580c;" aria-hidden="true"><path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"></path></svg>`;
+    const freezeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;flex-shrink:0;color:#164e63;" aria-hidden="true"><path d="m10 20-1.25-2.5L6 18"></path><path d="M10 4 8.75 6.5 6 6"></path><path d="m14 20 1.25-2.5L18 18"></path><path d="m14 4 1.25 2.5L18 6"></path><path d="m17 21-3-6h-4"></path><path d="m17 3-3 6 1.5 3"></path><path d="M2 12h6.5L10 9"></path><path d="m20 10-1.5 2 1.5 2"></path><path d="M22 12h-6.5L14 15"></path><path d="m4 10 1.5 2L4 14"></path><path d="m7 21 3-6-1.5-3"></path><path d="m7 3 3 6h4"></path></svg>`;
+    card.innerHTML = items.length || streakFreezesRemaining > 0
+      ? `
+        <div style="padding:16px 16px 14px; display:flex; flex-direction:column; gap:14px;">
+          <div style="padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,1);">
+            <div style="font-size:12px; line-height:1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.08em; color:rgba(104,77,58,0.95);">Project streaks</div>
+          </div>
+          <div style="display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,0.15);">
+            <div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:rgb(236 254 255); border:2px solid rgba(14,116,144,0.4); color:rgb(22 78 99);">
+              ${freezeIcon}
+              <span style="font-size:22px; line-height:1; font-weight:900;">${streakFreezesRemaining}</span>
+              <span style="font-size:13px; line-height:1rem; font-weight:700;">streak freezes</span>
+            </div>
+            <div style="display:flex; align-items:stretch; gap:8px; flex:1 1 220px; min-width:220px;">
+              <div style="flex:1 1 0; padding:8px 10px; border:2px solid rgba(104,77,58,0.15); background:rgba(104,77,58,0.05);">
+                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(104,77,58,0.6); font-weight:800;">Avg daily</div>
+                <div style="margin-top:4px; font-size:18px; line-height:1; font-weight:900; color:#684d3a;">${formatHours(averageRecentMinutes / 60)}</div>
+              </div>
+              <div style="flex:1 1 0; padding:8px 10px; border:2px solid rgba(104,77,58,0.15); background:rgba(104,77,58,0.05);">
+                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(104,77,58,0.6); font-weight:800;">Today</div>
+                <div style="margin-top:4px; font-size:18px; line-height:1; font-weight:900; color:#684d3a;">${formatHours(todayMinutes / 60)}</div>
+              </div>
+            </div>
+          </div>
+          ${sparkline ? `
+            <div style="display:flex; flex-direction:column; gap:8px; padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,0.15);">
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+                <div style="font-size:11px; line-height:1rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:rgba(104,77,58,0.7);">Recent activity</div>
+                <div style="font-size:10px; line-height:1rem; color:rgba(104,77,58,0.55); font-weight:700;">last 14 days</div>
+              </div>
+              <div style="padding:2px 0 0;">${sparkline}</div>
+              <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:10px; color:rgba(104,77,58,0.6); font-weight:700;">
+                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:#f97316; border:1px solid #c2410c;"></span>Active</span>
+                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:#22d3ee; border:1px solid #0e7490;"></span>Frozen</span>
+                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:rgba(253,224,71,0.6); border:1px solid rgba(202,138,4,0.5);"></span>Below target</span>
+              </div>
+            </div>
+          ` : ""}
+          <div style="display:flex; flex-direction:column; gap:6px;">
+          ${items.map((item) => `
+            <div style="display:flex; align-items:center; gap:12px; padding:8px 12px; background:rgba(104,77,58,0.05); border:2px solid rgba(104,77,58,0.2);">
+              ${flameIcon}
+              <span style="flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; line-height:1.25; font-weight:700; color:rgb(104 77 58);">${escapeHtml(item.title)}</span>
+              <span style="flex-shrink:0; font-size:24px; line-height:1; font-weight:900; color:rgb(104 77 58);">${Math.max(0, Math.round(Number(item.streakDays) || 0))}</span>
+              <span style="flex-shrink:0; font-size:12px; line-height:1rem; color:rgba(104,77,58,0.6);">days</span>
+            </div>
+          `).join("")}
+          </div>
+        </div>
+      `
+      : `
+        <div style="padding:16px; display:flex; flex-direction:column; gap:10px;">
+          <div style="padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,1); font-size:12px; line-height:1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.08em; color:rgba(104,77,58,0.95);">Project streaks</div>
+          <div style="font-size:13px; color:rgba(104,77,58,0.8);">No streak data found.</div>
+        </div>
+      `;
+    return card;
+  }
+
+  function positionStreakHoverCard(button, card) {
+    if (!(button instanceof HTMLElement) || !(card instanceof HTMLElement)) {
+      return;
+    }
+    card.hidden = false;
+    card.style.position = "fixed";
+    card.style.zIndex = "9999";
+    const rect = button.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const left = Math.max(12, Math.min(window.innerWidth - cardRect.width - 12, rect.left + rect.width / 2 - cardRect.width / 2));
+    const top = Math.min(window.innerHeight - cardRect.height - 12, rect.bottom + 10);
+    card.style.left = `${Math.round(left)}px`;
+    card.style.top = `${Math.round(Math.max(12, top))}px`;
+  }
+
+  async function getStreakHoverData() {
+    if (streakHoverData && typeof streakHoverData === "object") {
+      return streakHoverData;
+    }
+    if (streakHoverDataPromise) {
+      return streakHoverDataPromise;
+    }
+    streakHoverDataPromise = (async () => {
+      const now = new Date();
+      const currentMonth = formatYearMonth(getYearMonthParts(now));
+      const previousMonth = formatYearMonth(getPreviousYearMonth(getYearMonthParts(now)));
+      const [profileStreaks, currentCalendar, previousCalendar] = await Promise.all([
+        fetchProfileStreaks(),
+        fetchStreakCalendar(currentMonth),
+        fetchStreakCalendar(previousMonth)
+      ]);
+      const parsed = buildStreakHoverData(profileStreaks, mergeStreakCalendars([previousCalendar, currentCalendar]));
+      streakHoverData = parsed;
+      return parsed;
+    })();
+    try {
+      return await streakHoverDataPromise;
+    } finally {
+      streakHoverDataPromise = null;
+    }
+  }
+
+  function ensureStreakHoverInteraction() {
+    const button = getDashboardStreakButton();
+    if (!(button instanceof HTMLElement) || button.dataset.muStreakHoverBound === "true") {
+      return;
+    }
+    button.dataset.muStreakHoverBound = "true";
+    button.style.cursor = "default";
+    getStreakHoverData().then((data) => renderDashboardStreakProgress(data, button)).catch(() => {});
+    button.addEventListener("mouseenter", async () => {
+      if (streakHoverCardHideTimer) {
+        clearTimeout(streakHoverCardHideTimer);
+        streakHoverCardHideTimer = null;
+      }
+      const data = await getStreakHoverData();
+      renderDashboardStreakProgress(data, button);
+      const card = renderStreakHoverCard(data);
+      positionStreakHoverCard(button, card);
+    });
+    button.addEventListener("mouseleave", () => hideStreakHoverCard());
+    button.addEventListener("focus", async () => {
+      const data = await getStreakHoverData();
+      renderDashboardStreakProgress(data, button);
+      const card = renderStreakHoverCard(data);
+      positionStreakHoverCard(button, card);
+    });
+    button.addEventListener("blur", () => hideStreakHoverCard());
+  }
+
+  function maybeInterceptStreakButtonClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest("button") || null;
+    if (!button || button !== getDashboardStreakButton()) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
   }
 
   function applyEffectiveGoldPerHourFromMeta(metaById, projectIds) {
@@ -727,6 +1225,56 @@
     };
   }
 
+  function applyEffectiveRateResult(result) {
+    if (!result || !Number.isFinite(result.effectiveGoldPerHour) || result.effectiveGoldPerHour <= 0) {
+      return false;
+    }
+    effectiveGoldPerHour = result.effectiveGoldPerHour;
+    writeCache({
+      timestamp: Date.now(),
+      effectiveGoldPerHour: result.effectiveGoldPerHour,
+      totalHours: result.totalHours,
+      projectIds: result.projectIds
+    });
+    updateShopCardHours();
+    queueGoalsMiniRender();
+    refreshGoalOrderStatus();
+    return true;
+  }
+
+  function seedCreatedProjectCache(createdProject, payload, optionalPayload) {
+    const projectIdNum = Number(createdProject?.id);
+    if (!Number.isFinite(projectIdNum) || projectIdNum <= 0) {
+      return;
+    }
+
+    const projectId = String(projectIdNum);
+    const nextOrder = projectTileOrder.includes(projectId)
+      ? projectTileOrder
+      : [...projectTileOrder, projectId].slice(0, PROJECT_FETCH_LIMIT);
+    projectTileOrder = nextOrder;
+    writeProjectTileOrderCache(projectTileOrder);
+    projectIdsBootstrapped = true;
+    writeProjectIdBootstrapCache(true);
+
+    const title = String(createdProject?.name || payload?.name || "").trim();
+    const level = createdProject?.level ?? payload?.level;
+    const goldPerHour = getProjectGoldPerHourForLevel(level);
+    if (title) {
+      projectTitleById[projectId] = title;
+    }
+    projectMetaById[projectId] = {
+      title,
+      hours: 0,
+      streakDays: 0,
+      estCoins: 0,
+      totalEarnedGold: 0,
+      futureCoins: 0,
+      goldPerHour: Number.isFinite(goldPerHour) ? goldPerHour : null,
+      hackatimeProjects: Array.isArray(optionalPayload?.hackatimeProjects) ? optionalPayload.hackatimeProjects.slice() : []
+    };
+  }
+
   function readCachedRate() {
     const raw = localStorage.getItem(PROJECT_CACHE_KEY);
     if (!raw) {
@@ -745,7 +1293,7 @@
       if (normalizeOwnerName(currentOwnerName) && cachedOwnerName !== normalizeOwnerName(currentOwnerName)) {
         return null;
       }
-      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_HARVEST_TTL_MS) {
+      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_RATE_CACHE_TTL_MS) {
         return null;
       }
       if (!Number.isFinite(parsed.effectiveGoldPerHour) || parsed.effectiveGoldPerHour <= 0) {
@@ -968,36 +1516,10 @@
       if (!parsed || typeof parsed !== "object") {
         return [];
       }
-      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_HARVEST_TTL_MS) {
-        return [];
-      }
       if (!Array.isArray(parsed.order)) {
         return [];
       }
       return parsed.order.map((id) => String(id));
-    } catch (_err) {
-      return [];
-    }
-  }
-
-  function readProjectIdsFromRateCache() {
-    const raw = localStorage.getItem(PROJECT_CACHE_KEY);
-    if (!raw) {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.projectIds)) {
-        return [];
-      }
-      const cachedOwnerName = normalizeOwnerName(parsed.ownerName);
-      if (!cachedOwnerName) {
-        return [];
-      }
-      if (normalizeOwnerName(currentOwnerName) && cachedOwnerName !== normalizeOwnerName(currentOwnerName)) {
-        return [];
-      }
-      return parsed.projectIds.map((id) => String(id));
     } catch (_err) {
       return [];
     }
@@ -1676,7 +2198,7 @@
 
     const fallbackOrder = projectTileOrder.length
       ? projectTileOrder
-      : (Object.keys(projectTitleById).length ? Object.keys(projectTitleById) : readProjectIdsFromRateCache());
+      : getProjectIdsFromFarmTiles(projectsRoot);
 
     const layerRect = layer.getBoundingClientRect();
 
@@ -1874,6 +2396,10 @@
         if (!patchResponse.ok) {
           throw new Error(`Created project, but optional fields failed (${patchResponse.status})`);
         }
+      }
+
+      if (createdProject) {
+        seedCreatedProjectCache(createdProject, payload, optionalPayload);
       }
 
       removeCreateModal();
@@ -2410,31 +2936,18 @@
     return Boolean(document.querySelector("#projects .farm-tile-project")) || Boolean(document.querySelector("a[href*='/projects/']"));
   }
 
-  async function computeWeightedGoldPerHourFromProjects() {
-    await bootstrapProjectIdsFromHiddenHarvestOnce();
-    const discoveredFromDom = getProjectIdsFromDomLinks(document);
-    if (discoveredFromDom.length) {
-      mergeKnownProjectIds(discoveredFromDom);
-    }
-    let harvested = await requestBackgroundHarvest();
-    if ((!Array.isArray(harvested) || !harvested.length) && ALLOW_VISIBLE_FALLBACK_HARVEST) {
-      harvested = await harvestProjectMetricsFromFarmTiles();
-    }
-    return applyHarvestedProjectMetrics(harvested, { markBootstrapped: true });
-  }
-
-  async function refreshProjectLabelMeta() {
+  async function refreshProjectLabelMeta(force = false) {
     const now = Date.now();
-    if (projectMetaRefreshInFlight || now - lastProjectMetaRefreshAt < PROJECT_LABEL_META_REFRESH_MS) {
+    if (projectMetaRefreshInFlight || (!force && now - lastProjectMetaRefreshAt < PROJECT_LABEL_META_REFRESH_MS)) {
       return;
     }
     projectMetaRefreshInFlight = true;
 
     try {
       await bootstrapProjectIdsFromHiddenHarvestOnce();
-      const discoveredFromDom = getProjectIdsFromDomLinks(document);
+      const discoveredFromDom = getProjectIdsFromFarmTiles(document);
       if (discoveredFromDom.length) {
-        mergeKnownProjectIds(discoveredFromDom);
+        replaceKnownProjectIds(discoveredFromDom);
       }
       const projectIds = getKnownProjectIds();
       if (!projectIds.length) {
@@ -2450,7 +2963,7 @@
       for (const projectId of projectIds) {
         try {
           const project = await fetchProjectApi(projectId);
-          if (!project || !isOwnedProjectApiRecord(project)) {
+          if (!project) {
             continue;
           }
           const title = String(project.name || "").trim();
@@ -2470,25 +2983,16 @@
       const titlesAfter = JSON.stringify(mergedTitles);
       const metaBefore = JSON.stringify(projectMetaById);
       const metaAfter = JSON.stringify(mergedMeta);
+      const recomputed = applyEffectiveGoldPerHourFromMeta(mergedMeta, projectIds);
 
       if (titlesBefore !== titlesAfter) {
         projectTitleById = mergedTitles;
       }
       if (metaBefore !== metaAfter) {
         projectMetaById = mergedMeta;
-        const recomputed = applyEffectiveGoldPerHourFromMeta(projectMetaById, projectIds);
-        if (recomputed) {
-          effectiveGoldPerHour = recomputed.effectiveGoldPerHour;
-          writeCache({
-            timestamp: Date.now(),
-            effectiveGoldPerHour: recomputed.effectiveGoldPerHour,
-            totalHours: recomputed.totalHours,
-            projectIds: recomputed.projectIds
-          });
-          updateShopCardHours();
-          queueGoalsMiniRender();
-          refreshGoalOrderStatus();
-        }
+      }
+      if (recomputed) {
+        applyEffectiveRateResult(recomputed);
       }
       if (titlesBefore !== titlesAfter || metaBefore !== metaAfter) {
         queueProjectGroundLabelsSync();
@@ -2781,7 +3285,7 @@
     }
 
     const goal = getGoalForCandidate(candidate);
-    const qty = goal ? Math.max(1, Number(goal.quantity) || 1) : 1;
+    const qty = goal ? Math.max(1, Number(goal.quantity) || 1) : 0;
     let controls = actionsWrap.querySelector(".mu-shop-goal-controls");
     if (!controls) {
       withObserverSuppressed(() => {
@@ -3130,8 +3634,9 @@
     const cards = document.querySelectorAll(SHOP_CARD_SELECTOR);
     let updatedCount = 0;
     cards.forEach((card) => {
+      renderShopCardGoalControls(card);
       const hoursSpan = Array.from(card.querySelectorAll("span"))
-        .find((span) => /[>›]\s*\d+(?:\.\d+)?\s*hours?/i.test(span.textContent || ""));
+        .find((span) => /[>›]\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|m|h)\b/i.test(span.textContent || ""));
       const goldSpan = Array.from(card.querySelectorAll("span"))
         .find((span) => /\b\d[\d,]*\b/.test(span.textContent || "") && span.querySelector("img[src*='money']"));
 
@@ -3146,7 +3651,6 @@
 
       const computedHours = goldAmount / goldPerHour;
       if (!Number.isFinite(computedHours) || computedHours <= 0) {
-        renderShopCardGoalControls(card);
         return;
       }
 
@@ -3162,7 +3666,6 @@
           }
         });
       }
-      renderShopCardGoalControls(card);
       updatedCount += 1;
     });
   }
@@ -3175,33 +3678,26 @@
 
     try {
       const cached = readCachedRate();
-      if (cached) {
+      if (cached && (!Number.isFinite(effectiveGoldPerHour) || effectiveGoldPerHour <= 0)) {
         effectiveGoldPerHour = cached.effectiveGoldPerHour;
-        refreshProjectLabelMeta();
         if (pendingRender) {
           pendingRender = false;
           updateShopCardHours();
         }
         queueGoalsMiniRender();
         refreshGoalOrderStatus();
-        return;
       }
 
-      const computed = await computeWeightedGoldPerHourFromProjects();
+      let computed = applyEffectiveGoldPerHourFromMeta(projectMetaById, getKnownProjectIds());
+      if (!computed) {
+        await refreshProjectLabelMeta(true);
+        computed = applyEffectiveGoldPerHourFromMeta(projectMetaById, getKnownProjectIds());
+      }
       if (!computed) {
         return;
       }
 
-      effectiveGoldPerHour = computed.effectiveGoldPerHour;
-      writeCache({
-        timestamp: Date.now(),
-        effectiveGoldPerHour: computed.effectiveGoldPerHour,
-        totalHours: computed.totalHours,
-        projectIds: computed.projectIds
-      });
-      updateShopCardHours();
-      queueGoalsMiniRender();
-      refreshGoalOrderStatus();
+      applyEffectiveRateResult(computed);
     } finally {
       refreshInFlight = false;
     }
@@ -3238,6 +3734,7 @@
     scheduleRender();
     queueProjectGroundLabelsSync();
     ensureProjectLabelSettingsButton();
+    ensureStreakHoverInteraction();
     if (shouldRefreshGoalsFromMutations(records)) {
       queueGoalsMiniRender();
     }
@@ -3251,22 +3748,31 @@
     subtree: true
   });
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!message || message.type !== "macondo-utils-harvest") {
-      return;
-    }
+  if (isExtensionContextValid() && typeof chrome?.runtime?.onMessage?.addListener === "function") {
+    try {
+      chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (!message || message.type !== "macondo-utils-harvest") {
+          return;
+        }
 
-    (async () => {
-      try {
-        const metrics = await harvestProjectMetricsFromFarmTiles();
-        sendResponse({ ok: true, metrics });
-      } catch (error) {
-        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error), metrics: [] });
+        (async () => {
+          try {
+            const metrics = await harvestProjectMetricsFromFarmTiles();
+            sendResponse({ ok: true, metrics });
+          } catch (error) {
+            sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error), metrics: [] });
+          }
+        })();
+
+        return true;
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/Extension context invalidated/i.test(message)) {
+        console.warn(`${DEBUG_PREFIX} message listener was not attached because extension context was invalidated`);
       }
-    })();
-
-    return true;
-  });
+    }
+  }
 
   if (IS_HARVEST_TAB) {
     return;
@@ -3286,13 +3792,9 @@
     lastGoalOrderSyncAt = goalSyncCached.timestamp || 0;
   }
   if (!projectTileOrder.length) {
-    const fromTitles = Object.keys(projectTitleById);
-    if (fromTitles.length) {
-      projectTileOrder = fromTitles;
-    } else {
-      projectTileOrder = readProjectIdsFromRateCache();
-    }
+    projectTileOrder = getProjectIdsFromFarmTiles(document);
   }
+  sanitizeProjectTileOrderAgainstVisibleTiles();
   if (projectTileOrder.length) {
     projectIdsBootstrapped = true;
     writeProjectIdBootstrapCache(true);
@@ -3303,6 +3805,7 @@
   document.addEventListener("pointerup", trackCreateTilePointerUp, true);
   document.addEventListener("pointercancel", trackCreateTilePointerUp, true);
   document.addEventListener("click", maybeInterceptCreateTileClick, true);
+  document.addEventListener("click", maybeInterceptStreakButtonClick, true);
   document.addEventListener("click", handleShopStarToggleClick, true);
   document.addEventListener("click", handleShopCardGoalActionClick, true);
   document.addEventListener("click", (event) => {
@@ -3313,6 +3816,8 @@
   });
   window.addEventListener("resize", queueProjectGroundLabelsSync);
   window.addEventListener("resize", queueGoalsMiniRender);
+  window.addEventListener("resize", () => hideStreakHoverCard(true));
+  window.addEventListener("scroll", () => hideStreakHoverCard(true), true);
   window.addEventListener("resize", () => {
     const root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
     const panel = root?.querySelector(".mu-label-settings-panel");
@@ -3325,6 +3830,7 @@
   updateShopCardHours();
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
+  ensureStreakHoverInteraction();
   queueGoalsMiniRender();
   refreshProjectLabelMeta();
   refreshEffectiveRate();
@@ -3333,13 +3839,10 @@
     refreshProjectLabelMeta();
   }, PROJECT_LABEL_META_REFRESH_MS);
   setInterval(() => {
-    refreshEffectiveRate();
-  }, PROJECT_HARVEST_TTL_MS);
-  setInterval(() => {
     refreshGoalOrderStatus();
   }, PROJECT_GOALS_ORDER_SYNC_MS);
   setTimeout(function scheduleMidnightRefresh() {
-    refreshEffectiveRate();
+    refreshProjectLabelMeta(true);
     setTimeout(scheduleMidnightRefresh, msUntilNextLocalMidnight());
   }, msUntilNextLocalMidnight());
 
