@@ -15,14 +15,12 @@
 
   const SHOP_CARD_SELECTOR = "[data-flip-id]";
   const PROJECT_CACHE_KEY = "macondo_utils_project_rates";
-  const PROJECT_TITLE_CACHE_KEY = "macondo_utils_project_titles";
   const PROJECT_TILE_ORDER_CACHE_KEY = "macondo_utils_project_tile_order";
-  const PROJECT_LABEL_META_CACHE_KEY = "macondo_utils_project_label_meta";
   const PROJECT_ID_BOOTSTRAP_CACHE_KEY = "macondo_utils_project_id_bootstrap";
   const PROJECT_LABEL_PREFS_CACHE_KEY = "macondo_utils_project_label_prefs";
   const PROJECT_GOALS_CACHE_KEY = "macondo_utils_project_goals";
   const PROJECT_GOALS_ORDER_SYNC_CACHE_KEY = "macondo_utils_project_goals_order_sync";
-  const PROJECT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const PROJECT_HARVEST_TTL_MS = 3 * 24 * 60 * 60 * 1000;
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
@@ -431,11 +429,23 @@
       return;
     }
 
+    applyHarvestedProjectMetrics(harvested, { markBootstrapped: true });
+  }
+
+  function applyHarvestedProjectMetrics(harvested, options = {}) {
+    if (!Array.isArray(harvested) || !harvested.length) {
+      return null;
+    }
+
+    const markBootstrapped = options?.markBootstrapped !== false;
     let weightedRateSum = 0;
     let totalHours = 0;
     const harvestedIds = [];
     const mergedTitles = { ...projectTitleById };
     const mergedMeta = { ...projectMetaById };
+    const titlesBefore = JSON.stringify(projectTitleById);
+    const metaBefore = JSON.stringify(projectMetaById);
+
     harvested.forEach((metrics) => {
       weightedRateSum += (metrics.hours || 0) * (metrics.goldPerHour || 0);
       totalHours += metrics.hours || 0;
@@ -452,18 +462,27 @@
     if (harvestedIds.length) {
       projectTileOrder = harvestedIds;
       writeProjectTileOrderCache(projectTileOrder);
-      projectIdsBootstrapped = true;
-      writeProjectIdBootstrapCache(true);
+      if (markBootstrapped) {
+        projectIdsBootstrapped = true;
+        writeProjectIdBootstrapCache(true);
+      }
     }
-    if (Object.keys(mergedTitles).length) {
+
+    const titlesAfter = JSON.stringify(mergedTitles);
+    const metaAfter = JSON.stringify(mergedMeta);
+    const changedTitles = titlesBefore !== titlesAfter;
+    const changedMeta = metaBefore !== metaAfter;
+
+    if (changedTitles) {
       projectTitleById = mergedTitles;
-      writeProjectTitleCache(projectTitleById);
     }
-    if (Object.keys(mergedMeta).length) {
+    if (changedMeta) {
       projectMetaById = mergedMeta;
-      writeProjectLabelMetaCache(projectMetaById);
+    }
+    if (changedTitles || changedMeta) {
       queueProjectGroundLabelsSync();
     }
+
     if (totalHours > 0 && weightedRateSum > 0) {
       effectiveGoldPerHour = weightedRateSum / totalHours;
       writeCache({
@@ -473,42 +492,93 @@
         projectIds: harvestedIds
       });
     }
+
+    return {
+      effectiveGoldPerHour: totalHours > 0 && weightedRateSum > 0 ? weightedRateSum / totalHours : null,
+      totalHours,
+      projectIds: harvestedIds
+    };
   }
 
-  async function fetchProjectHtml(projectId) {
-    const response = await fetch(`/projects/${projectId}`, { credentials: "include" });
+  async function fetchProjectApi(projectId) {
+    const response = await fetch(`/api/projects/${projectId}`, { credentials: "include" });
     if (!response.ok) {
       return null;
     }
-    return response.text();
+    return response.json();
   }
 
-  function parseProjectTitleFromHtml(html) {
-    if (!html) {
-      return "";
+  function getProjectGoldPerHourForLevel(level) {
+    const numericLevel = Number.parseInt(String(level || ""), 10);
+    return PROJECT_HOURLY_RATE[numericLevel] || null;
+  }
+
+  function getStreakMultiplier(streakDays) {
+    const normalizedDays = Number.isFinite(Number(streakDays)) ? Math.max(0, Math.round(Number(streakDays))) : 0;
+    return 1 + (normalizedDays / 100);
+  }
+
+  function getProjectHoursFromHackatimeLinks(project, secondsByName, fallbackHours = 0) {
+    const linkedProjects = Array.isArray(project?.hackatime_projects) ? project.hackatime_projects : [];
+    let totalSeconds = 0;
+    linkedProjects.forEach((name) => {
+      const normalized = String(name || "").trim().toLowerCase();
+      if (!normalized) {
+        return;
+      }
+      totalSeconds += Number(secondsByName?.get(normalized) || 0);
+    });
+    if (totalSeconds > 0) {
+      return totalSeconds / 3600;
+    }
+    return Number.isFinite(Number(fallbackHours)) && Number(fallbackHours) > 0 ? Number(fallbackHours) : 0;
+  }
+
+  function getRoundedHoursForEstCoins(hours) {
+    return Number.isFinite(Number(hours)) && Number(hours) > 0 ? Math.max(0, Math.round(Number(hours))) : 0;
+  }
+
+  function getEstimatedUnshippedHours(project, totalHours) {
+    const currentHours = Number.isFinite(Number(totalHours)) && Number(totalHours) > 0 ? Number(totalHours) : 0;
+    const previousShippedHours = Number.isFinite(Number(project?.previousShippedHackatimeHours))
+      ? Math.max(0, Number(project.previousShippedHackatimeHours))
+      : 0;
+    const unshippedJournalHours = Number.isFinite(Number(project?.unshippedJournalHours))
+      ? Math.max(0, Number(project.unshippedJournalHours))
+      : 0;
+    return Math.max(0, currentHours - previousShippedHours + unshippedJournalHours);
+  }
+
+  function buildProjectMetaFromApi(project, fallbackMeta, secondsByName) {
+    if (!project || typeof project !== "object") {
+      return fallbackMeta || null;
     }
 
-    try {
-      const doc = new DOMParser().parseFromString(html, "text/html");
-      const candidates = [
-        doc.querySelector("h1"),
-        doc.querySelector("h2"),
-        doc.querySelector("meta[property='og:title']"),
-        doc.querySelector("title")
-      ];
-      for (const node of candidates) {
-        if (!node) {
-          continue;
-        }
-        const raw = node.getAttribute?.("content") || node.textContent || "";
-        const clean = String(raw).trim().replace(/\s*\|\s*Macondo.*$/i, "");
-        if (clean.length > 1) {
-          return clean;
-        }
-      }
-    } catch (_err) {}
+    const title = String(project.name || fallbackMeta?.title || "").trim();
+    const streakDays = Number.isFinite(Number(project.project_streak_days))
+      ? Math.max(0, Math.round(Number(project.project_streak_days)))
+      : Math.max(0, Math.round(Number(fallbackMeta?.streakDays) || 0));
+    const hours = getProjectHoursFromHackatimeLinks(project, secondsByName, fallbackMeta?.hours);
+    const fallbackTotalEarnedGold = Number.isFinite(Number(fallbackMeta?.totalEarnedGold))
+      ? Math.max(0, Math.round(Number(fallbackMeta.totalEarnedGold)))
+      : 0;
+    const goldPerHour = getProjectGoldPerHourForLevel(project.level);
+    const streakMultiplier = getStreakMultiplier(streakDays);
+    const estimatedUnshippedHours = getEstimatedUnshippedHours(project, hours);
+    const roundedHours = getRoundedHoursForEstCoins(estimatedUnshippedHours);
+    const estCoins = roundedHours > 0 && goldPerHour
+      ? Math.max(0, Math.round(roundedHours * goldPerHour * streakMultiplier))
+      : Math.max(0, Math.round(Number(fallbackMeta?.estCoins) || 0));
+    const futureCoins = Math.max(0, estCoins - fallbackTotalEarnedGold);
 
-    return "";
+    return {
+      title,
+      hours,
+      streakDays,
+      estCoins,
+      totalEarnedGold: fallbackTotalEarnedGold,
+      futureCoins
+    };
   }
 
   function readCachedRate() {
@@ -522,7 +592,7 @@
       if (!parsed || typeof parsed !== "object") {
         return null;
       }
-      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_CACHE_TTL_MS) {
+      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_HARVEST_TTL_MS) {
         return null;
       }
       if (!Number.isFinite(parsed.effectiveGoldPerHour) || parsed.effectiveGoldPerHour <= 0) {
@@ -536,64 +606,6 @@
 
   function writeCache(payload) {
     localStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(payload));
-  }
-
-  function readProjectTitleCache() {
-    const raw = localStorage.getItem(PROJECT_TITLE_CACHE_KEY);
-    if (!raw) {
-      return {};
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") {
-        return {};
-      }
-      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_CACHE_TTL_MS) {
-        return {};
-      }
-      if (!parsed.titles || typeof parsed.titles !== "object") {
-        return {};
-      }
-      return parsed.titles;
-    } catch (_err) {
-      return {};
-    }
-  }
-
-  function writeProjectTitleCache(titles) {
-    localStorage.setItem(PROJECT_TITLE_CACHE_KEY, JSON.stringify({
-      timestamp: Date.now(),
-      titles
-    }));
-  }
-
-  function readProjectLabelMetaCache() {
-    const raw = localStorage.getItem(PROJECT_LABEL_META_CACHE_KEY);
-    if (!raw) {
-      return {};
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== "object") {
-        return {};
-      }
-      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_CACHE_TTL_MS) {
-        return {};
-      }
-      if (!parsed.meta || typeof parsed.meta !== "object") {
-        return {};
-      }
-      return parsed.meta;
-    } catch (_err) {
-      return {};
-    }
-  }
-
-  function writeProjectLabelMetaCache(meta) {
-    localStorage.setItem(PROJECT_LABEL_META_CACHE_KEY, JSON.stringify({
-      timestamp: Date.now(),
-      meta
-    }));
   }
 
   function readProjectLabelPrefsCache() {
@@ -799,7 +811,7 @@
       if (!parsed || typeof parsed !== "object") {
         return [];
       }
-      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_CACHE_TTL_MS) {
+      if (Date.now() - Number(parsed.timestamp || 0) > PROJECT_HARVEST_TTL_MS) {
         return [];
       }
       if (!Array.isArray(parsed.order)) {
@@ -1620,47 +1632,6 @@
     });
   }
 
-  async function hydrateProjectTitlesFromKnownIds() {
-    if (Object.keys(projectTitleById).length > 0 && Object.keys(projectMetaById).length > 0) {
-      return;
-    }
-
-    const ids = getKnownProjectIds();
-    if (!ids.length) {
-      return;
-    }
-
-    const mergedTitles = { ...projectTitleById };
-    const mergedMeta = { ...projectMetaById };
-    for (const projectId of ids) {
-      try {
-        const html = await fetchProjectHtml(projectId);
-        if (!html) {
-          continue;
-        }
-        const title = parseProjectTitleFromHtml(html);
-        if (title) {
-          mergedTitles[String(projectId)] = title;
-        }
-        const metrics = parseProjectMetricsFromHtml(html);
-        const meta = buildProjectMeta(title, metrics);
-        if (meta) {
-          mergedMeta[String(projectId)] = meta;
-        }
-      } catch (_err) {
-        continue;
-      }
-    }
-
-    if (Object.keys(mergedTitles).length > 0) {
-      projectTitleById = mergedTitles;
-      writeProjectTitleCache(projectTitleById);
-      projectMetaById = mergedMeta;
-      writeProjectLabelMetaCache(projectMetaById);
-      queueProjectGroundLabelsSync();
-    }
-  }
-
   function onCreateEscape(event) {
     if (event.key === "Escape") {
       removeCreateModal();
@@ -1770,6 +1741,19 @@
         name: project.name.trim(),
         seconds: Number(project.total_seconds_in_window || 0)
       }));
+  }
+
+  function buildHackatimeSecondsByName(projects) {
+    const secondsByName = new Map();
+    (Array.isArray(projects) ? projects : []).forEach((project) => {
+      const name = String(project?.name || "").trim().toLowerCase();
+      const seconds = Number(project?.seconds || 0);
+      if (!name || !Number.isFinite(seconds) || seconds <= 0) {
+        return;
+      }
+      secondsByName.set(name, seconds);
+    });
+    return secondsByName;
   }
 
   async function uploadProjectImage(file) {
@@ -2268,78 +2252,11 @@
     if (discoveredFromDom.length) {
       mergeKnownProjectIds(discoveredFromDom);
     }
-    const projectIds = getKnownProjectIds();
-    if (!projectIds.length) {
-      if (ALLOW_VISIBLE_FALLBACK_HARVEST) {
-        const harvested = await harvestProjectMetricsFromFarmTiles();
-        if (harvested.length) {
-          projectTileOrder = harvested.map((metrics) => String(metrics.projectId));
-          writeProjectTileOrderCache(projectTileOrder);
-          return computeWeightedGoldPerHourFromProjects();
-        }
-      }
-      return null;
+    let harvested = await requestBackgroundHarvest();
+    if ((!Array.isArray(harvested) || !harvested.length) && ALLOW_VISIBLE_FALLBACK_HARVEST) {
+      harvested = await harvestProjectMetricsFromFarmTiles();
     }
-
-    let weightedRateSum = 0;
-    let totalHours = 0;
-    const mergedTitles = { ...projectTitleById };
-    const mergedMeta = { ...projectMetaById };
-
-    for (const projectId of projectIds) {
-      try {
-        const html = await fetchProjectHtml(projectId);
-        if (!html) {
-          continue;
-        }
-        const title = parseProjectTitleFromHtml(html);
-        if (title) {
-          mergedTitles[String(projectId)] = title;
-        }
-        const metrics = parseProjectMetricsFromHtml(html);
-        if (!metrics) {
-          continue;
-        }
-        const meta = buildProjectMeta(title, metrics);
-        if (meta) {
-          mergedMeta[String(projectId)] = meta;
-        }
-        weightedRateSum += metrics.hours * metrics.goldPerHour;
-        totalHours += metrics.hours;
-      } catch (_err) {
-        continue;
-      }
-    }
-
-    if (totalHours <= 0 || weightedRateSum <= 0) {
-      return null;
-    }
-
-    let shouldResyncLabels = false;
-
-    if (Object.keys(mergedTitles).length > Object.keys(projectTitleById).length) {
-      projectTitleById = mergedTitles;
-      writeProjectTitleCache(projectTitleById);
-      shouldResyncLabels = true;
-    }
-    if (Object.keys(mergedMeta).length > 0) {
-      const beforeMeta = JSON.stringify(projectMetaById);
-      const afterMeta = JSON.stringify(mergedMeta);
-      projectMetaById = mergedMeta;
-      writeProjectLabelMetaCache(projectMetaById);
-      if (beforeMeta !== afterMeta) {
-        shouldResyncLabels = true;
-      }
-    }
-    if (shouldResyncLabels) {
-      queueProjectGroundLabelsSync();
-    }
-
-    return {
-      effectiveGoldPerHour: weightedRateSum / totalHours,
-      projectIds,
-      totalHours
-    };
+    return applyHarvestedProjectMetrics(harvested, { markBootstrapped: true });
   }
 
   async function refreshProjectLabelMeta() {
@@ -2361,24 +2278,22 @@
         return;
       }
 
+      const secondsByName = buildHackatimeSecondsByName(await fetchHackatimeProjects());
+
       const mergedTitles = { ...projectTitleById };
       const mergedMeta = { ...projectMetaById };
 
       for (const projectId of projectIds) {
         try {
-          const html = await fetchProjectHtml(projectId);
-          if (!html) {
+          const project = await fetchProjectApi(projectId);
+          if (!project) {
             continue;
           }
-          const title = parseProjectTitleFromHtml(html);
+          const title = String(project.name || "").trim();
           if (title) {
             mergedTitles[String(projectId)] = title;
           }
-          const metrics = parseProjectMetricsFromHtml(html);
-          if (!metrics) {
-            continue;
-          }
-          const meta = buildProjectMeta(title, metrics);
+          const meta = buildProjectMetaFromApi(project, mergedMeta[String(projectId)] || null, secondsByName);
           if (meta) {
             mergedMeta[String(projectId)] = meta;
           }
@@ -2394,11 +2309,11 @@
 
       if (titlesBefore !== titlesAfter) {
         projectTitleById = mergedTitles;
-        writeProjectTitleCache(projectTitleById);
       }
       if (metaBefore !== metaAfter) {
         projectMetaById = mergedMeta;
-        writeProjectLabelMetaCache(projectMetaById);
+      }
+      if (titlesBefore !== titlesAfter || metaBefore !== metaAfter) {
         queueProjectGroundLabelsSync();
       }
 
@@ -3180,8 +3095,8 @@
     return;
   }
 
-  projectTitleById = readProjectTitleCache();
-  projectMetaById = readProjectLabelMetaCache();
+  projectTitleById = {};
+  projectMetaById = {};
   projectLabelPrefs = readProjectLabelPrefsCache();
   goalsViewMode = projectLabelPrefs.goalsViewMode === "projected" ? "projected" : "actual";
   projectGoals = readGoalsCache();
@@ -3233,7 +3148,6 @@
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
   queueGoalsMiniRender();
-  hydrateProjectTitlesFromKnownIds();
   refreshProjectLabelMeta();
   refreshEffectiveRate();
   refreshGoalOrderStatus();
@@ -3242,7 +3156,7 @@
   }, PROJECT_LABEL_META_REFRESH_MS);
   setInterval(() => {
     refreshEffectiveRate();
-  }, PROJECT_CACHE_TTL_MS);
+  }, PROJECT_HARVEST_TTL_MS);
   setInterval(() => {
     refreshGoalOrderStatus();
   }, PROJECT_GOALS_ORDER_SYNC_MS);
