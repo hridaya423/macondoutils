@@ -8,7 +8,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
 import { Target, Clock, X, Download, CheckCircle2, Zap, Flame, CalendarDays, MousePointerClick } from "lucide-react";
 
-const releaseUrl = "https://github.com/hridaya423/macondoutils/releases/tag/v0.1.0";
+const releaseUrl = "https://github.com/hridaya423/macondoutils/releases/";
 const repoUrl = "https://github.com/hridaya423/macondoutils";
 
 if (typeof window !== "undefined") {
