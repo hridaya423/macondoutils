@@ -3759,7 +3759,8 @@
       const progressGold = goalsProgressMode === "cumulative" ? cumulativeProgressGold : individualProgressGold;
       const rowRemainingGold = Math.max(0, targetGold - progressGold);
       const pct = targetGold > 0 ? Math.max(0, Math.min(100, Math.round((progressGold / targetGold) * 100))) : 0;
-      const hours = formatEtaHours(rate > 0 ? rowRemainingGold / rate : 0);
+      const etaRemainingGold = goalsProgressMode === "cumulative" ? cumulativeRemainingGold : rowRemainingGold;
+      const hours = formatEtaHours(rate > 0 ? etaRemainingGold / rate : 0);
       const progressLabel = `${progressGold}/${targetGold} gold`;
       const thumb = goal.imageUrl ? `<img class='mu-goal-mini-thumb' src='${escapeHtml(goal.imageUrl)}' alt='${escapeHtml(goal.name)}' />` : "";
       return `
