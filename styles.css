@@ -585,6 +585,22 @@
   border-top: 2px solid rgba(111, 79, 43, 0.25);
 }
 
+#macondo-utils-project-label-settings .mu-onboarding-launch-btn {
+  width: 100%;
+  margin-top: 10px;
+  height: 34px;
+  border: 2px solid #6f4f2b;
+  background: rgba(220, 191, 144, 0.9);
+  color: #5a3e23;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+#macondo-utils-project-label-settings .mu-onboarding-launch-btn:hover {
+  background: rgba(232, 205, 164, 0.95);
+}
+
 #macondo-utils-project-label-settings .mu-goal-add {
   display: grid;
   grid-template-columns: 1fr 64px auto;
@@ -1049,6 +1065,169 @@
 
 #macondo-utils-goals-mini .mu-goals-mini-progress-projected.active {
   display: block;
+}
+
+#macondo-utils-onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483645;
+  isolation: isolate;
+  pointer-events: auto;
+}
+
+#macondo-utils-onboarding .mu-onboarding-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2147483645;
+  background: rgba(41, 24, 9, 0.26);
+}
+
+#macondo-utils-onboarding.has-spotlight .mu-onboarding-backdrop {
+  background: transparent;
+}
+
+#macondo-utils-onboarding .mu-onboarding-spotlights {
+  position: absolute;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+}
+
+#macondo-utils-onboarding .mu-onboarding-spotlight {
+  position: fixed;
+  border: 3px solid rgba(255, 246, 220, 0.98);
+  background: transparent;
+  box-shadow: 0 0 0 9999px rgba(41, 24, 9, 0.22), 0 16px 36px rgba(44, 26, 10, 0.22);
+  animation: mu-onboarding-pulse 1.8s ease-in-out infinite;
+}
+
+#macondo-utils-onboarding .mu-onboarding-card {
+  position: relative;
+  z-index: 2147483647;
+  width: min(360px, calc(100vw - 32px));
+  border: 3px solid #6f4f2b;
+  background: linear-gradient(180deg, rgba(251, 238, 205, 0.99), rgba(245, 225, 183, 0.99));
+  color: #5a3e23;
+  box-shadow: 0 18px 36px rgba(44, 26, 10, 0.22);
+  padding: 18px 18px 16px;
+  pointer-events: auto;
+  touch-action: manipulation;
+  animation: mu-onboarding-card-in 220ms ease-out;
+}
+
+#macondo-utils-onboarding .mu-onboarding-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: none;
+}
+
+#macondo-utils-onboarding .mu-onboarding-stage .mu-onboarding-card {
+  pointer-events: auto;
+}
+
+#macondo-utils-onboarding .mu-onboarding-stage.floating {
+  display: block;
+  pointer-events: none;
+}
+
+#macondo-utils-onboarding .mu-onboarding-stage.floating .mu-onboarding-card {
+  position: fixed;
+}
+
+#macondo-utils-onboarding .mu-onboarding-eyebrow {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(90, 62, 35, 0.72);
+}
+
+#macondo-utils-onboarding .mu-onboarding-progress {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(90, 62, 35, 0.64);
+}
+
+#macondo-utils-onboarding .mu-onboarding-title {
+  margin: 10px 0 0;
+  font-size: 22px;
+  line-height: 1.08;
+  font-weight: 900;
+}
+
+#macondo-utils-onboarding .mu-onboarding-body {
+  margin: 10px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+#macondo-utils-onboarding .mu-onboarding-note {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: rgba(90, 62, 35, 0.78);
+}
+
+#macondo-utils-onboarding .mu-onboarding-actions {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#macondo-utils-onboarding .mu-onboarding-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@keyframes mu-onboarding-card-in {
+  0% {
+    opacity: 0;
+    filter: blur(1px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes mu-onboarding-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 9999px rgba(41, 24, 9, 0.22), 0 12px 28px rgba(44, 26, 10, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 9999px rgba(41, 24, 9, 0.22), 0 18px 40px rgba(44, 26, 10, 0.26);
+  }
+}
+
+#macondo-utils-onboarding .mu-onboarding-btn {
+  min-height: 38px;
+  border: 2px solid #6f4f2b;
+  background: #6f4f2b;
+  color: #f7e4bc;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+#macondo-utils-onboarding .mu-onboarding-btn.ghost {
+  background: rgba(255, 248, 235, 0.65);
+  color: #5a3e23;
+}
+
+.mu-onboarding-target {
+  position: relative;
+  z-index: 999998 !important;
+  box-shadow: 0 0 0 3px rgba(255, 248, 235, 0.95), 0 0 0 8px rgba(111, 79, 43, 0.35);
 }
 
 @media (min-width: 640px) {

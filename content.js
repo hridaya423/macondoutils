@@ -37,6 +37,11 @@
   const PROJECT_LABEL_LAYER_ID = "macondo-utils-project-label-layer";
   const PROJECT_LABEL_SETTINGS_ID = "macondo-utils-project-label-settings";
   const STREAK_HOVER_CARD_ID = "macondo-utils-streak-hover-card";
+  const ONBOARDING_STATE_KEY = "macondo_utils_onboarding_state";
+  const ONBOARDING_ROOT_ID = "macondo-utils-onboarding";
+  const ONBOARDING_VERSION = typeof chrome !== "undefined" && chrome.runtime?.getManifest
+    ? chrome.runtime.getManifest().version
+    : "0.1.0";
   const PROJECT_LABEL_TEXT_MAX = 26;
   const CREATE_MODAL_ID = "macondo-utils-create-modal";
   const CREATE_STYLE_ID = "macondo-utils-create-style";
@@ -64,6 +69,9 @@
   let streakHoverCardHideTimer = null;
   let streakHoverDataPromise = null;
   let streakHoverData = null;
+  let onboardingQueued = false;
+  let onboardingTargetNode = null;
+  let onboardingAutoStarDone = false;
   let projectLabelPrefs = {
     showHours: true,
     showStreak: true,
@@ -1965,6 +1973,22 @@
     }
   }
 
+  function ensureProjectLabelSettingsPanelOpen() {
+    const root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
+    const button = root?.querySelector(".mu-label-settings-btn");
+    const panel = root?.querySelector(".mu-label-settings-panel");
+    if (!(button instanceof HTMLButtonElement) || !(panel instanceof HTMLElement)) {
+      return false;
+    }
+    if (panel.hidden) {
+      button.click();
+    } else {
+      positionProjectLabelSettingsPanel(button, panel);
+      renderGoalSettingsPanel(panel);
+    }
+    return true;
+  }
+
   function positionProjectLabelSettingsPanel(button, panel) {
     if (!(button instanceof HTMLElement) || !(panel instanceof HTMLElement)) {
       return;
@@ -1981,50 +2005,6 @@
   function renderGoalSettingsPanel(panel) {
     if (!(panel instanceof HTMLElement)) {
       return;
-    }
-    const goalList = panel.querySelector(".mu-goals-list");
-    if (goalList instanceof HTMLElement) {
-      const goals = projectGoals.slice();
-      const nextMarkup = [
-        "<div class='mu-goals-config-block'>",
-        "<div class='mu-label-settings-heading'>Goal progress</div>",
-        "<div class='mu-goals-mode-row'>",
-        `<button type='button' class='mu-goals-mode-btn${goalsProgressMode === "cumulative" ? " active" : ""}' data-goal-progress-mode='cumulative'>Cumulative</button>`,
-        `<button type='button' class='mu-goals-mode-btn${goalsProgressMode === "individual" ? " active" : ""}' data-goal-progress-mode='individual'>Individual</button>`,
-        "</div>",
-        "<div class='mu-goals-help'>Drag to reorder. Cumulative uses queue order. Individual treats each item on its own.</div>",
-        "</div>",
-        goals.length
-          ? goals.map((goal) => {
-            const thumb = goal.imageUrl ? `<img class='mu-goal-item-thumb' src='${escapeHtml(goal.imageUrl)}' alt='${escapeHtml(goal.name)}' />` : "<div class='mu-goal-item-thumb placeholder'></div>";
-            return `
-              <div class='mu-goal-item' draggable='true' data-goal-drag-id='${escapeHtml(goal.id)}'>
-                <div class='mu-goal-item-top'>
-                  <div class='mu-goal-item-main'>
-                    <span class='mu-goal-item-handle' aria-hidden='true'>::</span>
-                    ${thumb}
-                    <div>
-                      <div class='mu-goal-item-name'>${escapeHtml(goal.name)}</div>
-                      <div class='mu-goal-item-meta'>${goal.unitGold} each</div>
-                    </div>
-                  </div>
-                  <button type='button' class='mu-goal-remove-btn' data-goal-remove='${escapeHtml(goal.id)}'>Remove</button>
-                </div>
-                <div class='mu-goal-item-actions'>
-                  <button type='button' class='mu-goal-qty-btn' data-goal-qty-adjust='-1' data-goal-id='${escapeHtml(goal.id)}'>-</button>
-                  <span class='mu-goal-item-qty'>x${Math.max(1, Number(goal.quantity) || 1)}</span>
-                  <button type='button' class='mu-goal-qty-btn' data-goal-qty-adjust='1' data-goal-id='${escapeHtml(goal.id)}'>+</button>
-                </div>
-              </div>
-            `;
-          }).join("")
-          : "<div class='mu-goals-empty'>Add goals from shop items, then drag them into the order you want.</div>"
-      ].join("");
-      if (goalList.innerHTML !== nextMarkup) {
-        withObserverSuppressed(() => {
-          goalList.innerHTML = nextMarkup;
-        });
-      }
     }
   }
 
@@ -2217,7 +2197,7 @@
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudProgressStat' checked /> <span>Show progress box</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudRemainingStat' checked /> <span>Show remaining box</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudEtaStat' checked /> <span>Show ETA box</span></label>",
-        "<div class='mu-goals-list'></div>",
+        "<button type='button' class='mu-onboarding-launch-btn' data-open-onboarding='true'>Open feature walkthrough</button>",
         "</div>"
       ].join("");
 
@@ -2260,6 +2240,11 @@
         const progressModeToggle = targetNode.closest("[data-goal-progress-mode]");
         if (progressModeToggle instanceof HTMLElement) {
           handleGoalsProgressModeToggle(progressModeToggle);
+          return;
+        }
+        if (targetNode.closest("[data-open-onboarding]")) {
+          restartOnboarding();
+          panel.hidden = true;
           return;
         }
         const removeButton = targetNode.closest("[data-goal-remove]");
@@ -3246,6 +3231,533 @@
     root.querySelectorAll(".dragging").forEach((node) => node.classList.remove("dragging"));
   }
 
+  function readOnboardingState() {
+    const raw = localStorage.getItem(ONBOARDING_STATE_KEY);
+    if (!raw) {
+      return { version: ONBOARDING_VERSION, step: 0, completed: false, dismissed: false };
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (String(parsed?.version || "") !== ONBOARDING_VERSION) {
+        return { version: ONBOARDING_VERSION, step: 0, completed: false, dismissed: false };
+      }
+      return {
+        version: ONBOARDING_VERSION,
+        step: Math.max(0, Math.round(Number(parsed?.step) || 0)),
+        completed: parsed?.completed === true,
+        dismissed: parsed?.dismissed === true
+      };
+    } catch (_err) {
+      return { version: ONBOARDING_VERSION, step: 0, completed: false, dismissed: false };
+    }
+  }
+
+  function writeOnboardingState(state) {
+    localStorage.setItem(ONBOARDING_STATE_KEY, JSON.stringify({
+      version: String(state?.version || ONBOARDING_VERSION),
+      step: Math.max(0, Math.round(Number(state?.step) || 0)),
+      completed: state?.completed === true,
+      dismissed: state?.dismissed === true,
+      timestamp: Date.now()
+    }));
+  }
+
+  function getCurrentMacondoView() {
+    if (isShopModalOpen()) {
+      return "shop";
+    }
+    if (window.location.pathname.startsWith("/shop")) {
+      return "shop";
+    }
+    if (document.getElementById("projects") || getDashboardStreakButton()) {
+      return "dashboard";
+    }
+    return "other";
+  }
+
+  function getOnboardingFlow() {
+    const flows = {
+      "0.1.0": [
+      {
+        id: "welcome",
+        view: "dashboard",
+        title: "Welcome to Macondo Utils",
+        body: "You are set up. Macondo Utils adds a few small upgrades around Macondo so the useful information is easier to see and act on. Let’s do a quick walkthrough.",
+        target: null,
+        allowUntargeted: true
+      },
+      {
+        id: "labels",
+        view: "dashboard",
+        title: "Project labels are on the farm now",
+        body: "Each project tile can show time, streak, and estimated coins without opening anything.",
+        target: () => document.querySelector(`#${PROJECT_LABEL_LAYER_ID} .mu-ground-label`)
+      },
+      {
+        id: "streak",
+        view: "dashboard",
+        title: "Streak details open right here",
+        body: "The streak panel opens in place so you can see streak freezes, today’s time, average daily time, and recent activity without leaving the page.",
+        target: () => getDashboardStreakButton()
+      },
+      {
+        id: "shop-estimates",
+        view: "shop",
+        title: "Shop estimates use your real rate",
+        body: "This little time hint is calculated from your weighted effective gold per hour, so the estimate reflects your actual projects instead of a generic default.",
+        target: () => findShopEstimateNode()
+      },
+      {
+        id: "shop-star",
+        view: "shop",
+        title: "Star an item to turn it into a goal",
+        body: "This star is the start of the goals flow. We will pin one item so you can immediately see the queue, progress modes, and drag-to-reorder HUD.",
+        target: () => findShopStarButton()
+      },
+      {
+        id: "shop-goals",
+        view: "shop",
+        title: "Your goals queue lives here",
+        body: "Starred items land in this HUD so you can track progress without leaving the farm.",
+        target: () => document.getElementById("macondo-utils-goals-mini")
+      },
+      {
+        id: "shop-goal-modes",
+        view: "shop",
+        title: "These toggles change the view",
+        body: "Switch between actual and projected progress, then flip between cumulative and individual goal tracking here.",
+        target: () => document.querySelector("#macondo-utils-goals-mini .mu-goals-mini-controls-row")
+      },
+      {
+        id: "settings",
+        view: "dashboard",
+        title: "Settings live here",
+        body: "These toggles control labels and HUD visibility. You can always reopen the walkthrough from here.",
+        target: () => document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`)
+      }
+      ]
+    };
+    const fallbackVersion = Object.keys(flows).sort().at(-1) || ONBOARDING_VERSION;
+    return {
+      version: ONBOARDING_VERSION,
+      steps: flows[ONBOARDING_VERSION] || flows[fallbackVersion] || []
+    };
+  }
+
+  function clearOnboardingTarget() {
+    onboardingTargetNode = null;
+  }
+
+  function setOnboardingTarget(node) {
+    if (node instanceof HTMLElement) {
+      onboardingTargetNode = node;
+      return;
+    }
+    onboardingTargetNode = null;
+  }
+
+  function getOnboardingRectForElement(node, padding = 12) {
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+    return {
+      left: Math.max(8, rect.left - padding),
+      top: Math.max(8, rect.top - padding),
+      width: Math.min(window.innerWidth - 16, rect.width + padding * 2),
+      height: Math.min(window.innerHeight - 16, rect.height + padding * 2),
+      rotate: 0
+    };
+  }
+
+  function getOnboardingUnionRect(nodes, padding = 16, rotate = 0) {
+    const rects = (Array.isArray(nodes) ? nodes : []).map((node) => node instanceof HTMLElement ? node.getBoundingClientRect() : null).filter((rect) => rect && rect.width > 0 && rect.height > 0);
+    if (!rects.length) {
+      return null;
+    }
+    const left = Math.min(...rects.map((rect) => rect.left));
+    const top = Math.min(...rects.map((rect) => rect.top));
+    const right = Math.max(...rects.map((rect) => rect.right));
+    const bottom = Math.max(...rects.map((rect) => rect.bottom));
+    return {
+      left: Math.max(8, left - padding),
+      top: Math.max(8, top - padding),
+      width: Math.min(window.innerWidth - 16, (right - left) + padding * 2),
+      height: Math.min(window.innerHeight - 16, (bottom - top) + padding * 2),
+      rotate
+    };
+  }
+
+  function findShopEstimateNode() {
+    return Array.from(document.querySelectorAll(`${SHOP_CARD_SELECTOR} span[title]`)).find((node) => /Calculated with .* effective gold\/hour/i.test(String(node.getAttribute("title") || ""))) || null;
+  }
+
+  function findShopStarButton() {
+    return Array.from(document.querySelectorAll(`${SHOP_CARD_SELECTOR} button[aria-label*='Star']`)).find((node) => node instanceof HTMLButtonElement) || null;
+  }
+
+  function findShopModalTrigger() {
+    return document.querySelector(".donkey-area") || null;
+  }
+
+  function isShopModalOpen() {
+    return Boolean(document.querySelector(".modal-frame .bg-parchment"));
+  }
+
+  function openShopModalFromDashboard() {
+    const trigger = findShopModalTrigger();
+    if (trigger instanceof HTMLElement) {
+      trigger.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      return true;
+    }
+    return false;
+  }
+
+  function closeShopModalToDashboard() {
+    const backButton = Array.from(document.querySelectorAll(".modal-frame button")).find((button) =>
+      /Back to farm/i.test(button.textContent || "")
+    );
+    if (backButton instanceof HTMLButtonElement) {
+      backButton.click();
+      return true;
+    }
+    return false;
+  }
+
+  function buildOnboardingSpotlightRects(step, target) {
+    if (!step) {
+      return [];
+    }
+    if (step.id === "labels") {
+      const labels = Array.from(document.querySelectorAll(`#${PROJECT_LABEL_LAYER_ID} .mu-ground-label`)).slice(0, 3);
+      const union = getOnboardingUnionRect(labels, 14, -2);
+      return union ? [union] : [];
+    }
+    if (step.id === "streak") {
+      const union = getOnboardingUnionRect([
+        getDashboardStreakButton(),
+        document.getElementById(STREAK_HOVER_CARD_ID)
+      ], 10, 0);
+      return union ? [union] : [];
+    }
+    if (step.id === "shop-goals") {
+      const hud = document.getElementById("macondo-utils-goals-mini");
+      const union = getOnboardingUnionRect([hud], 14, 0);
+      return union ? [union] : [];
+    }
+    if (step.id === "shop-goal-modes") {
+      const controlsRect = getOnboardingRectForElement(document.querySelector("#macondo-utils-goals-mini .mu-goals-mini-controls-row"), 10);
+      return controlsRect ? [controlsRect] : [];
+    }
+    if (step.id === "settings") {
+      const panelRect = getOnboardingRectForElement(document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`), 10);
+      return panelRect ? [panelRect] : [];
+    }
+    const targetRect = getOnboardingRectForElement(target, 12);
+    return targetRect ? [targetRect] : [];
+  }
+
+  function renderOnboardingSpotlights(root, step, target) {
+    const layer = root.querySelector(".mu-onboarding-spotlights");
+    if (!(layer instanceof HTMLElement)) {
+      return;
+    }
+    const rects = buildOnboardingSpotlightRects(step, target);
+    root.classList.toggle("has-spotlight", rects.length > 0);
+    layer.innerHTML = rects.map((rect) => `
+      <div class="mu-onboarding-spotlight" style="left:${Math.round(rect.left)}px;top:${Math.round(rect.top)}px;width:${Math.round(rect.width)}px;height:${Math.round(rect.height)}px;transform:rotate(${rect.rotate || 0}deg);"></div>
+    `).join("");
+  }
+
+  function forceOnboardingCardStyles(card) {
+    card.style.setProperty("all", "initial", "important");
+    card.style.setProperty("position", "fixed", "important");
+    card.style.setProperty("z-index", "2147483647", "important");
+    card.style.setProperty("background", "#fbeecd", "important");
+    card.style.setProperty("border", "3px solid #6f4f2b", "important");
+    card.style.setProperty("color", "#5a3e23", "important");
+    card.style.setProperty("padding", "18px 18px 16px", "important");
+    card.style.setProperty("width", "min(360px, calc(100vw - 32px))", "important");
+    card.style.setProperty("box-shadow", "0 18px 36px rgba(44, 26, 10, 0.22)", "important");
+    card.style.setProperty("font-family", "Trebuchet MS, Gill Sans, Arial, sans-serif", "important");
+    card.style.setProperty("line-height", "1.4", "important");
+    card.style.setProperty("box-sizing", "border-box", "important");
+    card.style.setProperty("display", "block", "important");
+    card.style.setProperty("visibility", "visible", "important");
+    card.style.setProperty("opacity", "1", "important");
+  }
+
+  function maybePrimeOnboardingStep(step) {
+    if (!step) {
+      return;
+    }
+    if (step.id !== "streak") {
+      hideStreakHoverCard(true);
+    }
+    if (step.id === "streak") {
+      const button = getDashboardStreakButton();
+      if (button instanceof HTMLElement) {
+        getStreakHoverData().then((data) => {
+          renderDashboardStreakProgress(data, button);
+          const card = renderStreakHoverCard(data);
+          card.hidden = false;
+          positionStreakHoverCard(button, card);
+          queueOnboardingRender();
+        }).catch(() => {});
+      }
+    }
+    if (step.id === "shop-star" && !onboardingAutoStarDone) {
+      const goalsHud = document.getElementById("macondo-utils-goals-mini");
+      const button = findShopStarButton();
+      if (!goalsHud && button instanceof HTMLButtonElement && /(^|\s)Star\b/i.test(String(button.getAttribute("aria-label") || button.title || ""))) {
+        onboardingAutoStarDone = true;
+        button.click();
+        queueOnboardingRender();
+      }
+    }
+    if (step.id === "shop-estimates" || step.id === "shop-star" || step.id === "shop-goals" || step.id === "shop-goal-modes") {
+      if (!isShopModalOpen()) {
+        openShopModalFromDashboard();
+      }
+    }
+    if (step.id === "settings") {
+      if (isShopModalOpen()) {
+        closeShopModalToDashboard();
+      }
+      ensureProjectLabelSettingsPanelOpen();
+    } else {
+      closeProjectLabelSettingsPanel();
+    }
+  }
+
+  function removeOnboardingUi() {
+    clearOnboardingTarget();
+    const root = document.getElementById(ONBOARDING_ROOT_ID);
+    if (root) {
+      root.remove();
+    }
+  }
+
+  function setOnboardingStep(step) {
+    const state = readOnboardingState();
+    writeOnboardingState({ ...state, step, completed: false, dismissed: false });
+    queueOnboardingRender();
+  }
+
+  function completeOnboarding() {
+    const state = readOnboardingState();
+    writeOnboardingState({ ...state, completed: true, dismissed: false });
+    closeProjectLabelSettingsPanel();
+    removeOnboardingUi();
+  }
+
+  function dismissOnboarding() {
+    const state = readOnboardingState();
+    writeOnboardingState({ ...state, dismissed: true });
+    closeProjectLabelSettingsPanel();
+    removeOnboardingUi();
+  }
+
+  function restartOnboarding() {
+    writeOnboardingState({ step: 0, completed: false, dismissed: false });
+    queueOnboardingRender();
+  }
+
+  function runOnboardingAction(action) {
+    const { steps } = getOnboardingFlow();
+    const state = readOnboardingState();
+    const nextStep = Math.max(0, Math.min(steps.length - 1, state.step || 0));
+    if (action === "skip") {
+      dismissOnboarding();
+      return;
+    }
+    if (action === "back") {
+      setOnboardingStep(Math.max(0, nextStep - 1));
+      return;
+    }
+    if (action === "next") {
+      if (nextStep >= steps.length - 1) {
+        completeOnboarding();
+        return;
+      }
+      setOnboardingStep(nextStep + 1);
+      return;
+    }
+    if (action === "goto-dashboard") {
+      writeOnboardingState({ ...state, step: nextStep, completed: false, dismissed: false });
+      window.location.assign("/dashboard");
+      return;
+    }
+    if (action === "goto-shop") {
+      writeOnboardingState({ ...state, step: nextStep, completed: false, dismissed: false });
+      window.location.assign("/shop");
+    }
+  }
+
+  function ensureOnboardingRoot() {
+    let root = document.getElementById(ONBOARDING_ROOT_ID);
+    if (root) {
+      return root;
+    }
+    root = document.createElement("div");
+    root.id = ONBOARDING_ROOT_ID;
+    root.style.setProperty("position", "fixed", "important");
+    root.style.setProperty("inset", "0", "important");
+    root.style.setProperty("z-index", "2147483647", "important");
+    root.style.setProperty("display", "block", "important");
+    root.style.setProperty("visibility", "visible", "important");
+    root.style.setProperty("opacity", "1", "important");
+    root.style.setProperty("pointer-events", "auto", "important");
+    root.addEventListener("pointerdown", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-onboarding-action]") : null;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      runOnboardingAction(String(target.getAttribute("data-onboarding-action") || ""));
+    });
+    root.addEventListener("click", (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-onboarding-action]") : null;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const action = String(target.getAttribute("data-onboarding-action") || "");
+      runOnboardingAction(action);
+    });
+    document.body.appendChild(root);
+    return root;
+  }
+
+  function renderOnboarding() {
+    const state = readOnboardingState();
+    if (state.completed || state.dismissed) {
+      removeOnboardingUi();
+      return;
+    }
+    const { steps } = getOnboardingFlow();
+    const stepIndex = Math.max(0, Math.min(steps.length - 1, state.step || 0));
+    const step = steps[stepIndex];
+    const root = ensureOnboardingRoot();
+    maybePrimeOnboardingStep(step);
+    const currentView = getCurrentMacondoView();
+    const onCorrectView = currentView === step.view;
+    const target = onCorrectView && typeof step.target === "function" ? step.target() : null;
+    const needsNavigation = step.view === "shop" ? currentView !== "shop" : currentView !== "dashboard";
+    const primaryAction = needsNavigation
+      ? (step.view === "shop" ? "goto-shop" : "goto-dashboard")
+      : "next";
+    const primaryLabel = needsNavigation
+      ? (step.view === "shop" ? "Open Shop" : "Open Dashboard")
+      : (stepIndex >= steps.length - 1 ? "Finish" : "Next");
+    const note = needsNavigation
+      ? `This step lives on the ${step.view} page.`
+      : step.allowUntargeted === true
+        ? ""
+        : target
+          ? ""
+          : "Waiting for this feature to appear...";
+    root.innerHTML = `
+      <div class="mu-onboarding-backdrop"></div>
+      <div class="mu-onboarding-spotlights"></div>
+      <div class="mu-onboarding-stage">
+        <div class="mu-onboarding-card">
+          <div class="mu-onboarding-eyebrow">Macondo Utils</div>
+          <div class="mu-onboarding-progress">Step ${stepIndex + 1} of ${steps.length}</div>
+          <h3 class="mu-onboarding-title">${escapeHtml(step.title)}</h3>
+          <p class="mu-onboarding-body">${escapeHtml(step.body)}</p>
+          ${note ? `<div class="mu-onboarding-note">${escapeHtml(note)}</div>` : ""}
+          <div class="mu-onboarding-actions">
+            <button type="button" class="mu-onboarding-btn ghost" data-onboarding-action="skip">Skip Tour</button>
+            <div class="mu-onboarding-actions-right">
+              ${stepIndex > 0 ? `<button type="button" class="mu-onboarding-btn ghost" data-onboarding-action="back">Back</button>` : ""}
+              <button type="button" class="mu-onboarding-btn" data-onboarding-action="${primaryAction}">${escapeHtml(primaryLabel)}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    const stage = root.querySelector(".mu-onboarding-stage");
+    const card = root.querySelector(".mu-onboarding-card");
+    if (!(stage instanceof HTMLElement) || !(card instanceof HTMLElement)) {
+      clearOnboardingTarget();
+      return;
+    }
+    forceOnboardingCardStyles(card);
+    root.querySelectorAll("[data-onboarding-action]").forEach((node) => {
+      if (!(node instanceof HTMLButtonElement)) {
+        return;
+      }
+      node.onpointerdown = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runOnboardingAction(String(node.getAttribute("data-onboarding-action") || ""));
+      };
+      node.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        runOnboardingAction(String(node.getAttribute("data-onboarding-action") || ""));
+      };
+    });
+    if (target instanceof HTMLElement && !needsNavigation) {
+      setOnboardingTarget(target);
+      renderOnboardingSpotlights(root, step, target);
+      stage.classList.add("floating");
+      card.style.setProperty("position", "fixed", "important");
+      const rect = target.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
+      const gap = 16;
+      let left = rect.right + gap;
+      if (left + cardRect.width > window.innerWidth - 16) {
+        left = rect.left - cardRect.width - gap;
+      }
+      if (left < 16) {
+        left = Math.max(16, Math.min(window.innerWidth - cardRect.width - 16, rect.left));
+      }
+      let top = rect.top;
+      if (top + cardRect.height > window.innerHeight - 16) {
+        top = window.innerHeight - cardRect.height - 16;
+      }
+      if (top < 16) {
+        top = 16;
+      }
+      card.style.setProperty("left", `${Math.round(left)}px`, "important");
+      card.style.setProperty("top", `${Math.round(top)}px`, "important");
+      card.style.setProperty("transform", "none", "important");
+      if (typeof target.scrollIntoView === "function") {
+        const isOutsideViewport = rect.top < 32 || rect.bottom > window.innerHeight - 32;
+        if (isOutsideViewport) {
+          target.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+        }
+      }
+      return;
+    }
+    clearOnboardingTarget();
+    renderOnboardingSpotlights(root, step, target);
+    stage.classList.remove("floating");
+    card.style.setProperty("position", "fixed", "important");
+    card.style.setProperty("left", "50%", "important");
+    card.style.setProperty("top", "50%", "important");
+    card.style.setProperty("transform", "translate(-50%, -50%)", "important");
+    card.style.setProperty("display", "block", "important");
+    card.style.setProperty("visibility", "visible", "important");
+    card.style.setProperty("opacity", "1", "important");
+  }
+
+  function queueOnboardingRender() {
+    if (onboardingQueued) {
+      return;
+    }
+    onboardingQueued = true;
+    requestAnimationFrame(() => {
+      onboardingQueued = false;
+      renderOnboarding();
+    });
+  }
+
   function getProjectedExtras() {
     const projectedCoins = Object.values(projectMetaById || {}).reduce((sum, meta) => {
       const coins = Number(meta?.futureCoins);
@@ -4033,6 +4545,7 @@
     if (shouldRefreshGoalsFromMutations(records)) {
       queueGoalsMiniRender();
     }
+    queueOnboardingRender();
     if (hasProjectContextOnPage()) {
       scheduleRefresh("dom-mutation-project-context");
     }
@@ -4112,7 +4625,9 @@
   });
   window.addEventListener("resize", queueProjectGroundLabelsSync);
   window.addEventListener("resize", queueGoalsMiniRender);
+  window.addEventListener("resize", queueOnboardingRender);
   window.addEventListener("resize", () => hideStreakHoverCard(true));
+  window.addEventListener("scroll", queueOnboardingRender, true);
   window.addEventListener("scroll", () => hideStreakHoverCard(true), true);
   window.addEventListener("resize", () => {
     const root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
@@ -4128,6 +4643,7 @@
   ensureProjectLabelSettingsButton();
   ensureStreakHoverInteraction();
   queueGoalsMiniRender();
+  queueOnboardingRender();
   refreshProjectLabelMeta();
   refreshEffectiveRate();
   refreshGoalOrderStatus();
