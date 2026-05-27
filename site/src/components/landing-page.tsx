@@ -230,8 +230,8 @@ export default function LandingPage() {
          <div className="max-w-5xl mx-auto">
             <div className="text-center mb-16">
               <h2 className="text-4xl md:text-5xl font-heading font-bold tracking-tight mt-6 text-[#2D1B11]">
-                Macondo+ copies. Macondo Utils ships.<br/>
-                That is the whole story.
+                One tool adds real quality-of-life improvements.<br/>
+                The other notices a little later.
               </h2>
             </div>
 

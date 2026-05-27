@@ -57,6 +57,9 @@
   let goalsMiniQueued = false;
   let lastGoalsMiniSignature = "";
   let goalsViewMode = "actual";
+  let goalsProgressMode = "cumulative";
+  let draggedGoalId = "";
+  let draggedGoalPreviewNode = null;
   let suppressedObserverMutations = 0;
   let streakHoverCardHideTimer = null;
   let streakHoverDataPromise = null;
@@ -67,6 +70,7 @@
     showEstCoins: true,
     showGoalsHud: true,
     goalsViewMode: "actual",
+    goalsProgressMode: "cumulative",
     showHudGoalsStat: true,
     showHudProgressStat: true,
     showHudRemainingStat: true,
@@ -90,6 +94,10 @@
   function parseFloatSafe(text) {
     const n = Number.parseFloat(String(text).replace(/[^0-9.]/g, ""));
     return Number.isFinite(n) ? n : null;
+  }
+
+  function normalizeGoalsProgressMode(mode) {
+    return String(mode || "").toLowerCase() === "individual" ? "individual" : "cumulative";
   }
 
 
@@ -186,8 +194,10 @@
       return null;
     }
 
+    const modalText = String(getProjectModalElement()?.textContent || getOpenModalElement()?.textContent || "");
+    const streakDays = parseProjectStreakDaysFromText(modalText);
     const multiplier = parseMultiplierFromProjectModal();
-    return PROJECT_HOURLY_RATE[level] * multiplier;
+    return getProjectEffectiveGoldPerHour(level, { streakDays, multiplier });
   }
 
   function getProjectIdsFromFarmTiles(root = document) {
@@ -259,14 +269,12 @@
       return null;
     }
 
-    const streakMatch = html.match(/(\d+)\s*[- ]\s*d(?:ay|ays)?(?:\s+project)?\s*streak/i)
-      || html.match(/(\d+)\s*d(?:ay|ays)?\s*streak/i);
-    const streakDays = streakMatch ? Number.parseInt(streakMatch[1], 10) : 0;
+    const streakDays = parseProjectStreakDaysFromText(html);
     const totalEarnedMatch = html.match(/Total\s*Earned:\s*([\d,]+)\s*gold/i);
     const totalEarnedGold = totalEarnedMatch
       ? Number.parseInt(String(totalEarnedMatch[1]).replace(/,/g, ""), 10)
       : 0;
-    const goldPerHour = PROJECT_HOURLY_RATE[level] * multiplier;
+    const goldPerHour = getProjectEffectiveGoldPerHour(level, { streakDays, multiplier });
 
     return {
       hours,
@@ -715,9 +723,31 @@
     return PROJECT_HOURLY_RATE[numericLevel] || null;
   }
 
+  function parseProjectStreakDaysFromText(text) {
+    const streakMatch = String(text || "").match(/(\d+)\s*[- ]\s*d(?:ay|ays)?(?:\s+project)?\s*streak/i)
+      || String(text || "").match(/(\d+)\s*d(?:ay|ays)?\s*streak/i);
+    return streakMatch ? Number.parseInt(streakMatch[1], 10) : 0;
+  }
+
   function getStreakMultiplier(streakDays) {
     const normalizedDays = Number.isFinite(Number(streakDays)) ? Math.max(0, Math.round(Number(streakDays))) : 0;
     return 1 + (normalizedDays / 100);
+  }
+
+  function getProjectEffectiveGoldPerHour(level, options = {}) {
+    const baseGoldPerHour = getProjectGoldPerHourForLevel(level);
+    if (!Number.isFinite(baseGoldPerHour) || baseGoldPerHour <= 0) {
+      return null;
+    }
+    const streakDays = Number(options?.streakDays);
+    if (Number.isFinite(streakDays)) {
+      return baseGoldPerHour * getStreakMultiplier(streakDays);
+    }
+    const multiplier = Number(options?.multiplier);
+    if (Number.isFinite(multiplier) && multiplier > 0) {
+      return baseGoldPerHour * multiplier;
+    }
+    return baseGoldPerHour;
   }
 
   function getProjectHoursFromHackatimeLinks(project, secondsByName, fallbackHours = 0) {
@@ -764,12 +794,11 @@
     const fallbackTotalEarnedGold = Number.isFinite(Number(fallbackMeta?.totalEarnedGold))
       ? Math.max(0, Math.round(Number(fallbackMeta.totalEarnedGold)))
       : 0;
-    const goldPerHour = getProjectGoldPerHourForLevel(project.level);
-    const streakMultiplier = getStreakMultiplier(streakDays);
+    const goldPerHour = getProjectEffectiveGoldPerHour(project.level, { streakDays });
     const estimatedUnshippedHours = getEstimatedUnshippedHours(project, hours);
     const roundedHours = getRoundedHoursForEstCoins(estimatedUnshippedHours);
     const estCoins = roundedHours > 0 && goldPerHour
-      ? Math.max(0, Math.round(roundedHours * goldPerHour * streakMultiplier))
+      ? Math.max(0, Math.round(roundedHours * goldPerHour))
       : Math.max(0, Math.round(Number(fallbackMeta?.estCoins) || 0));
     const futureCoins = Math.max(0, estCoins - fallbackTotalEarnedGold);
 
@@ -1259,7 +1288,7 @@
 
     const title = String(createdProject?.name || payload?.name || "").trim();
     const level = createdProject?.level ?? payload?.level;
-    const goldPerHour = getProjectGoldPerHourForLevel(level);
+    const goldPerHour = getProjectEffectiveGoldPerHour(level, { streakDays: 0 });
     if (title) {
       projectTitleById[projectId] = title;
     }
@@ -1321,6 +1350,7 @@
         showEstCoins: true,
         showGoalsHud: true,
         goalsViewMode: "actual",
+        goalsProgressMode: "cumulative",
         showHudGoalsStat: true,
         showHudProgressStat: true,
         showHudRemainingStat: true,
@@ -1335,6 +1365,7 @@
         showEstCoins: parsed?.showEstCoins !== false,
         showGoalsHud: parsed?.showGoalsHud !== false,
         goalsViewMode: parsed?.goalsViewMode === "projected" ? "projected" : "actual",
+        goalsProgressMode: normalizeGoalsProgressMode(parsed?.goalsProgressMode),
         showHudGoalsStat: parsed?.showHudGoalsStat !== false,
         showHudProgressStat: parsed?.showHudProgressStat !== false,
         showHudRemainingStat: parsed?.showHudRemainingStat !== false,
@@ -1347,6 +1378,7 @@
         showEstCoins: true,
         showGoalsHud: true,
         goalsViewMode: "actual",
+        goalsProgressMode: "cumulative",
         showHudGoalsStat: true,
         showHudProgressStat: true,
         showHudRemainingStat: true,
@@ -1363,6 +1395,7 @@
       showEstCoins: prefs.showEstCoins !== false,
       showGoalsHud: prefs.showGoalsHud !== false,
       goalsViewMode: prefs.goalsViewMode === "projected" ? "projected" : "actual",
+      goalsProgressMode: normalizeGoalsProgressMode(prefs.goalsProgressMode),
       showHudGoalsStat: prefs.showHudGoalsStat !== false,
       showHudProgressStat: prefs.showHudProgressStat !== false,
       showHudRemainingStat: prefs.showHudRemainingStat !== false,
@@ -1951,7 +1984,42 @@
     }
     const goalList = panel.querySelector(".mu-goals-list");
     if (goalList instanceof HTMLElement) {
-      const nextMarkup = "";
+      const goals = projectGoals.slice();
+      const nextMarkup = [
+        "<div class='mu-goals-config-block'>",
+        "<div class='mu-label-settings-heading'>Goal progress</div>",
+        "<div class='mu-goals-mode-row'>",
+        `<button type='button' class='mu-goals-mode-btn${goalsProgressMode === "cumulative" ? " active" : ""}' data-goal-progress-mode='cumulative'>Cumulative</button>`,
+        `<button type='button' class='mu-goals-mode-btn${goalsProgressMode === "individual" ? " active" : ""}' data-goal-progress-mode='individual'>Individual</button>`,
+        "</div>",
+        "<div class='mu-goals-help'>Drag to reorder. Cumulative uses queue order. Individual treats each item on its own.</div>",
+        "</div>",
+        goals.length
+          ? goals.map((goal) => {
+            const thumb = goal.imageUrl ? `<img class='mu-goal-item-thumb' src='${escapeHtml(goal.imageUrl)}' alt='${escapeHtml(goal.name)}' />` : "<div class='mu-goal-item-thumb placeholder'></div>";
+            return `
+              <div class='mu-goal-item' draggable='true' data-goal-drag-id='${escapeHtml(goal.id)}'>
+                <div class='mu-goal-item-top'>
+                  <div class='mu-goal-item-main'>
+                    <span class='mu-goal-item-handle' aria-hidden='true'>::</span>
+                    ${thumb}
+                    <div>
+                      <div class='mu-goal-item-name'>${escapeHtml(goal.name)}</div>
+                      <div class='mu-goal-item-meta'>${goal.unitGold} each</div>
+                    </div>
+                  </div>
+                  <button type='button' class='mu-goal-remove-btn' data-goal-remove='${escapeHtml(goal.id)}'>Remove</button>
+                </div>
+                <div class='mu-goal-item-actions'>
+                  <button type='button' class='mu-goal-qty-btn' data-goal-qty-adjust='-1' data-goal-id='${escapeHtml(goal.id)}'>-</button>
+                  <span class='mu-goal-item-qty'>x${Math.max(1, Number(goal.quantity) || 1)}</span>
+                  <button type='button' class='mu-goal-qty-btn' data-goal-qty-adjust='1' data-goal-id='${escapeHtml(goal.id)}'>+</button>
+                </div>
+              </div>
+            `;
+          }).join("")
+          : "<div class='mu-goals-empty'>Add goals from shop items, then drag them into the order you want.</div>"
+      ].join("");
       if (goalList.innerHTML !== nextMarkup) {
         withObserverSuppressed(() => {
           goalList.innerHTML = nextMarkup;
@@ -1992,6 +2060,36 @@
     const nextGoals = projectGoals.filter((goal) => goal.id !== id);
     if (nextGoals.length === projectGoals.length) {
       return;
+    }
+    projectGoals = nextGoals;
+    writeGoalsCache(projectGoals);
+    const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
+    if (panel instanceof HTMLElement && !panel.hidden) {
+      renderGoalSettingsPanel(panel);
+    }
+    syncAllShopCardGoalControls();
+    queueGoalsMiniRender();
+  }
+
+  function reorderGoal(dragId, targetId) {
+    const fromIndex = projectGoals.findIndex((goal) => goal.id === dragId);
+    if (fromIndex < 0) {
+      return;
+    }
+    const nextGoals = projectGoals.slice();
+    const [movedGoal] = nextGoals.splice(fromIndex, 1);
+    if (!movedGoal) {
+      return;
+    }
+    if (!targetId) {
+      nextGoals.push(movedGoal);
+    } else {
+      const targetIndex = nextGoals.findIndex((goal) => goal.id === targetId);
+      if (targetIndex < 0) {
+        nextGoals.push(movedGoal);
+      } else {
+        nextGoals.splice(targetIndex, 0, movedGoal);
+      }
     }
     projectGoals = nextGoals;
     writeGoalsCache(projectGoals);
@@ -2045,6 +2143,28 @@
       goalsViewMode: mode
     };
     writeProjectLabelPrefsCache(projectLabelPrefs);
+    queueGoalsMiniRender();
+    return true;
+  }
+
+  function handleGoalsProgressModeToggle(action) {
+    if (!(action instanceof HTMLElement)) {
+      return false;
+    }
+    const mode = normalizeGoalsProgressMode(action.getAttribute("data-goal-progress-mode") || "");
+    if (goalsProgressMode === mode) {
+      return true;
+    }
+    goalsProgressMode = mode;
+    projectLabelPrefs = {
+      ...projectLabelPrefs,
+      goalsProgressMode: mode
+    };
+    writeProjectLabelPrefsCache(projectLabelPrefs);
+    const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
+    if (panel instanceof HTMLElement && !panel.hidden) {
+      renderGoalSettingsPanel(panel);
+    }
     queueGoalsMiniRender();
     return true;
   }
@@ -2137,6 +2257,11 @@
         if (!targetNode) {
           return;
         }
+        const progressModeToggle = targetNode.closest("[data-goal-progress-mode]");
+        if (progressModeToggle instanceof HTMLElement) {
+          handleGoalsProgressModeToggle(progressModeToggle);
+          return;
+        }
         const removeButton = targetNode.closest("[data-goal-remove]");
         if (removeButton instanceof HTMLElement) {
           handleGoalActionElement(removeButton);
@@ -2146,6 +2271,54 @@
         if (qtyAdjust instanceof HTMLElement) {
           handleGoalActionElement(qtyAdjust);
         }
+      });
+
+      panel.addEventListener("dragstart", (event) => {
+        const targetNode = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id]") : null;
+        if (!(targetNode instanceof HTMLElement)) {
+          return;
+        }
+        draggedGoalId = String(targetNode.getAttribute("data-goal-drag-id") || "");
+        if (!draggedGoalId) {
+          return;
+        }
+        draggedGoalPreviewNode = targetNode;
+        targetNode.classList.add("dragging");
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", draggedGoalId);
+        }
+      });
+
+      panel.addEventListener("dragover", (event) => {
+        const goalListNode = panel.querySelector(".mu-goals-list");
+        const targetNode = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id], .mu-goals-list") : null;
+        if (!(goalListNode instanceof HTMLElement) || !(targetNode instanceof HTMLElement) || !draggedGoalId) {
+          return;
+        }
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = "move";
+        }
+        previewDraggedGoalPlacement(goalListNode, targetNode, event.clientY);
+      });
+
+      panel.addEventListener("drop", (event) => {
+        const dragId = event.dataTransfer?.getData("text/plain") || draggedGoalId;
+        const goalListNode = panel.querySelector(".mu-goals-list");
+        if (!(goalListNode instanceof HTMLElement) || !dragId) {
+          return;
+        }
+        event.preventDefault();
+        persistGoalOrderFromContainer(goalListNode);
+        draggedGoalId = "";
+        draggedGoalPreviewNode = null;
+      });
+
+      panel.addEventListener("dragend", () => {
+        draggedGoalId = "";
+        draggedGoalPreviewNode = null;
+        clearDraggedGoalClasses(panel);
       });
 
       root.appendChild(button);
@@ -3025,6 +3198,54 @@
     return formatHours(hours);
   }
 
+  function persistGoalOrderFromContainer(container) {
+    if (!(container instanceof HTMLElement)) {
+      return;
+    }
+    const orderedIds = Array.from(container.querySelectorAll("[data-goal-drag-id]"))
+      .map((node) => String(node.getAttribute("data-goal-drag-id") || ""))
+      .filter(Boolean);
+    if (!orderedIds.length || orderedIds.length !== projectGoals.length) {
+      return;
+    }
+    const goalById = new Map(projectGoals.map((goal) => [goal.id, goal]));
+    const nextGoals = orderedIds.map((id) => goalById.get(id)).filter(Boolean);
+    if (nextGoals.length !== projectGoals.length) {
+      return;
+    }
+    projectGoals = nextGoals;
+    writeGoalsCache(projectGoals);
+    syncAllShopCardGoalControls();
+    queueGoalsMiniRender();
+  }
+
+  function previewDraggedGoalPlacement(container, targetNode, clientY) {
+    if (!(container instanceof HTMLElement) || !(targetNode instanceof HTMLElement) || !(draggedGoalPreviewNode instanceof HTMLElement)) {
+      return;
+    }
+    if (targetNode === draggedGoalPreviewNode) {
+      return;
+    }
+    if (targetNode.matches("[data-goal-drag-id]")) {
+      const rect = targetNode.getBoundingClientRect();
+      const insertBefore = clientY < rect.top + rect.height / 2;
+      if (insertBefore) {
+        container.insertBefore(draggedGoalPreviewNode, targetNode);
+      } else {
+        container.insertBefore(draggedGoalPreviewNode, targetNode.nextSibling);
+      }
+      return;
+    }
+    container.appendChild(draggedGoalPreviewNode);
+  }
+
+  function clearDraggedGoalClasses(root) {
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    root.querySelectorAll(".dragging").forEach((node) => node.classList.remove("dragging"));
+  }
+
   function getProjectedExtras() {
     const projectedCoins = Object.values(projectMetaById || {}).reduce((sum, meta) => {
       const coins = Number(meta?.futureCoins);
@@ -3511,7 +3732,7 @@
     const projectedCoins = goalsViewMode === "projected" ? projected.coins : 0;
     const displayGold = currentGold + projectedCoins;
     const rate = effectiveGoldPerHour || 0;
-    const sorted = projectGoals.slice().sort((a, b) => a.createdAt - b.createdAt);
+    const sorted = projectGoals.slice();
     const totalTargetGold = sorted.reduce((sum, goal) => sum + (goal.unitGold * goal.quantity), 0);
     const totalProgressGold = Math.max(0, displayGold);
     const totalRemainingGold = Math.max(0, totalTargetGold - totalProgressGold);
@@ -3526,20 +3747,29 @@
     const projectedSegmentPct = Math.max(0, totalProgressPct - actualProgressPct);
     const totalEta = formatEtaHours(rate > 0 ? totalRemainingGold / rate : 0);
 
+    let cumulativeTargetGold = 0;
     const rows = sorted.slice(0, 6).map((goal) => {
       const targetGold = goal.unitGold * goal.quantity;
-      const remainingGold = Math.max(0, targetGold - displayGold);
-      const pct = targetGold > 0 ? Math.max(0, Math.min(100, Math.round((displayGold / targetGold) * 100))) : 0;
-      const hours = formatEtaHours(rate > 0 ? remainingGold / rate : 0);
-      const unit = goal.unitGold > 0 ? `${goal.unitGold} each` : "";
+      const cumulativeBeforeGold = cumulativeTargetGold;
+      cumulativeTargetGold += targetGold;
+      const availableForThisGold = Math.max(0, displayGold - cumulativeBeforeGold);
+      const cumulativeRemainingGold = Math.max(0, cumulativeTargetGold - displayGold);
+      const cumulativeProgressGold = Math.max(0, Math.min(targetGold, availableForThisGold));
+      const individualProgressGold = Math.max(0, Math.min(targetGold, displayGold));
+      const progressGold = goalsProgressMode === "cumulative" ? cumulativeProgressGold : individualProgressGold;
+      const rowRemainingGold = Math.max(0, targetGold - progressGold);
+      const pct = targetGold > 0 ? Math.max(0, Math.min(100, Math.round((progressGold / targetGold) * 100))) : 0;
+      const hours = formatEtaHours(rate > 0 ? rowRemainingGold / rate : 0);
+      const progressLabel = `${progressGold}/${targetGold} gold`;
       const thumb = goal.imageUrl ? `<img class='mu-goal-mini-thumb' src='${escapeHtml(goal.imageUrl)}' alt='${escapeHtml(goal.name)}' />` : "";
       return `
-        <div class='mu-goal-mini-pill'>
+        <div class='mu-goal-mini-pill' draggable='true' data-goal-drag-id='${escapeHtml(goal.id)}'>
           <div class='mu-goal-mini-item-main'>
+            <span class='mu-goal-mini-handle' aria-hidden='true'>::</span>
             ${thumb}
             <div class='mu-goal-mini-item-text'>
               <div class='mu-goal-mini-name'>${escapeHtml(goal.name)}</div>
-              <div class='mu-goal-mini-sub'>${displayGold}/${targetGold} gold • ${hours}</div>
+              <div class='mu-goal-mini-sub'>${progressLabel} • ${hours}</div>
             </div>
           </div>
           <div class='mu-goal-mini-controls'>
@@ -3563,9 +3793,15 @@
         <div class='mu-goals-mini-title'>Goals</div>
         <div class='mu-goals-mini-pct'>${totalProgressPct}%</div>
       </div>
-      <div class='mu-goals-mini-mode'>
-        <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "actual" ? " active" : ""}' data-goals-mode='actual'>Actual</button>
-        <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "projected" ? " active" : ""}' data-goals-mode='projected'>Projected</button>
+      <div class='mu-goals-mini-controls-row'>
+        <div class='mu-goals-mini-mode'>
+          <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "actual" ? " active" : ""}' data-goals-mode='actual'>Actual</button>
+          <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "projected" ? " active" : ""}' data-goals-mode='projected'>Projected</button>
+        </div>
+        <div class='mu-goals-mini-mode mu-goals-mini-mode-secondary'>
+          <button type='button' class='mu-goals-mini-mode-btn${goalsProgressMode === "cumulative" ? " active" : ""}' data-goal-progress-mode='cumulative'>Cumulative</button>
+          <button type='button' class='mu-goals-mini-mode-btn${goalsProgressMode === "individual" ? " active" : ""}' data-goal-progress-mode='individual'>Individual</button>
+        </div>
       </div>
       <div class='mu-goals-mini-progress' role='progressbar' aria-valuemin='0' aria-valuemax='${Math.max(1, totalTargetGold)}' aria-valuenow='${boundedProgressGold}' aria-label='Goals progress'>
         <span class='mu-goals-mini-progress-actual' style='width:${actualProgressPct}%;'></span>
@@ -3577,6 +3813,7 @@
     const nextSignature = JSON.stringify({
       mode,
       goalsViewMode,
+      goalsProgressMode,
       goals: sorted.map((goal) => ({
         id: goal.id,
         quantity: goal.quantity,
@@ -3608,19 +3845,76 @@
         return;
       }
       const action = target.closest("[data-goal-qty-adjust][data-goal-id], [data-goal-remove]");
-      if (!(action instanceof HTMLElement)) {
-        const modeToggle = target.closest("[data-goals-mode]");
-        if (modeToggle instanceof HTMLElement) {
-          event.preventDefault();
-          event.stopPropagation();
-          handleGoalsModeToggle(modeToggle);
+        if (!(action instanceof HTMLElement)) {
+          const modeToggle = target.closest("[data-goals-mode]");
+          if (modeToggle instanceof HTMLElement) {
+            event.preventDefault();
+            event.stopPropagation();
+            handleGoalsModeToggle(modeToggle);
+            return;
+          }
+          const progressModeToggle = target.closest("[data-goal-progress-mode]");
+          if (progressModeToggle instanceof HTMLElement) {
+            event.preventDefault();
+            event.stopPropagation();
+            handleGoalsProgressModeToggle(progressModeToggle);
+          }
+          return;
         }
-        return;
-      }
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
       handleGoalActionElement(action);
+    };
+
+    box.ondragstart = (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id]") : null;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      draggedGoalId = String(target.getAttribute("data-goal-drag-id") || "");
+      if (!draggedGoalId) {
+        return;
+      }
+      draggedGoalPreviewNode = target;
+      target.classList.add("dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", draggedGoalId);
+      }
+    };
+
+    box.ondragover = (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id], .mu-goals-mini-list") : null;
+      if (!(target instanceof HTMLElement) || !draggedGoalId) {
+        return;
+      }
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+      const list = box.querySelector(".mu-goals-mini-list");
+      if (list instanceof HTMLElement) {
+        previewDraggedGoalPlacement(list, target, event.clientY);
+      }
+    };
+
+    box.ondrop = (event) => {
+      const dragId = event.dataTransfer?.getData("text/plain") || draggedGoalId;
+      const list = box.querySelector(".mu-goals-mini-list");
+      if (!(list instanceof HTMLElement) || !dragId) {
+        return;
+      }
+      event.preventDefault();
+      persistGoalOrderFromContainer(list);
+      draggedGoalId = "";
+      draggedGoalPreviewNode = null;
+    };
+
+    box.ondragend = () => {
+      draggedGoalId = "";
+      draggedGoalPreviewNode = null;1
+      clearDraggedGoalClasses(box);
     };
   }
 
@@ -3783,6 +4077,7 @@
   projectMetaById = {};
   projectLabelPrefs = readProjectLabelPrefsCache();
   goalsViewMode = projectLabelPrefs.goalsViewMode === "projected" ? "projected" : "actual";
+  goalsProgressMode = normalizeGoalsProgressMode(projectLabelPrefs.goalsProgressMode);
   projectGoals = readGoalsCache();
   projectTileOrder = readProjectTileOrderCache();
   projectIdsBootstrapped = readProjectIdBootstrapCache();

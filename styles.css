@@ -624,10 +624,87 @@
   overflow: auto;
 }
 
+#macondo-utils-project-label-settings .mu-goals-config-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 4px;
+}
+
+#macondo-utils-project-label-settings .mu-goals-mode-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid rgba(111, 79, 43, 0.28);
+  background: rgba(255, 248, 235, 0.72);
+}
+
+#macondo-utils-project-label-settings .mu-goals-mode-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: #5a3e23;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+#macondo-utils-project-label-settings .mu-goals-mode-btn.active {
+  border-color: rgba(111, 79, 43, 0.35);
+  background: rgba(111, 79, 43, 0.12);
+}
+
+#macondo-utils-project-label-settings .mu-goals-help {
+  font-size: 11px;
+  line-height: 1.25;
+  color: rgba(90, 62, 35, 0.82);
+}
+
 #macondo-utils-project-label-settings .mu-goal-item {
   border: 2px solid rgba(111, 79, 43, 0.35);
   background: rgba(255, 248, 235, 0.72);
   padding: 6px;
+  cursor: grab;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item.dragging {
+  opacity: 0.55;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-thumb {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  border: 1px solid rgba(111, 79, 43, 0.24);
+  background: rgba(255, 248, 235, 0.92);
+  border-radius: 999px;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-thumb.placeholder {
+  display: inline-block;
+}
+
+#macondo-utils-project-label-settings .mu-goal-item-handle {
+  flex-shrink: 0;
+  color: rgba(90, 62, 35, 0.55);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
 }
 
 #macondo-utils-project-label-settings .mu-goal-item-name {
@@ -736,14 +813,26 @@
   gap: 10px;
 }
 
-#macondo-utils-goals-mini .mu-goals-mini-mode {
+#macondo-utils-goals-mini .mu-goals-mini-controls-row {
   margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-mode {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 2px;
   border: 1px solid rgba(104, 77, 58, 0.28);
   background: rgba(246, 233, 202, 0.75);
+}
+
+#macondo-utils-goals-mini .mu-goals-mini-mode-secondary {
+  margin-left: auto;
 }
 
 #macondo-utils-goals-mini .mu-goals-mini-mode-btn {
@@ -824,6 +913,11 @@
   border-radius: 10px;
   background: rgba(243, 226, 198, 0.92);
   padding: 6px 8px;
+  cursor: grab;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-pill.dragging {
+  opacity: 0.55;
 }
 
 #macondo-utils-goals-mini .mu-goal-mini-item-main {
@@ -831,6 +925,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+#macondo-utils-goals-mini .mu-goal-mini-handle {
+  flex-shrink: 0;
+  color: rgba(95, 66, 40, 0.5);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
 }
 
 #macondo-utils-goals-mini .mu-goal-mini-thumb {
@@ -959,6 +1061,15 @@
   #macondo-utils-goals-mini.mu-goals-mini {
     padding: 10px;
     width: min(96vw, 420px);
+  }
+
+  #macondo-utils-goals-mini .mu-goals-mini-controls-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  #macondo-utils-goals-mini .mu-goals-mini-mode-secondary {
+    margin-left: 0;
   }
 
   #macondo-utils-goals-mini .mu-goals-mini-title {
