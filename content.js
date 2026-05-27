@@ -3269,6 +3269,9 @@
     if (window.location.pathname.startsWith("/shop")) {
       return "shop";
     }
+    if (window.location.pathname.startsWith("/dashboard") || window.location.pathname === "/") {
+      return "dashboard";
+    }
     if (document.getElementById("projects") || getDashboardStreakButton()) {
       return "dashboard";
     }
