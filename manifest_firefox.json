@@ -3,6 +3,11 @@
   "name": "Macondo Utils",
   "description": "Quality-of-life improvements for Macondo.",
   "version": "0.1.0",
+  "icons": {
+    "48": "assets/icon48.png",
+    "64": "assets/icon64.png",
+    "128": "assets/icon128.png"
+  },
   "permissions": [
     "tabs"
   ],
