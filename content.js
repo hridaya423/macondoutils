@@ -25,10 +25,13 @@
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
+  const HIDDEN_HARVEST_FAILURE_BACKOFF_MS = 60 * 1000;
   let effectiveGoldPerHour = null;
   let refreshInFlight = false;
   let pendingRender = false;
   let harvestInFlight = false;
+  let hiddenHarvestRequestPromise = null;
+  let hiddenHarvestDisabledUntil = 0;
   let refreshRetryTimer = null;
   const DEBUG_PREFIX = "[Macondo Utils]";
   const IS_HARVEST_TAB = new URLSearchParams(window.location.search).has("macondo_utils_harvest");
@@ -324,6 +327,24 @@
     return null;
   }
 
+  async function mapWithConcurrency(items, limit, mapper) {
+    const list = Array.isArray(items) ? items : [];
+    const concurrency = Math.max(1, Math.min(list.length || 1, Math.round(Number(limit) || 1)));
+    const results = new Array(list.length);
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < list.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(list[currentIndex], currentIndex);
+      }
+    }
+
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    return results;
+  }
+
   function getOpenModalElement() {
     const modals = Array.from(document.querySelectorAll(".modal-frame"));
     const visible = modals
@@ -411,6 +432,34 @@
       return String(heading?.textContent || "").trim();
     } catch (_err) {
       return "";
+    }
+  }
+
+  function parseProjectListingsFromProfileHtml(html) {
+    if (!html) {
+      return [];
+    }
+
+    try {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const seen = new Set();
+      const listings = [];
+      Array.from(doc.querySelectorAll("a[href*='/projects/']")).forEach((link) => {
+        const href = link.getAttribute("href") || "";
+        const match = href.match(/\/projects\/(\d+)/);
+        const projectId = match?.[1] ? String(match[1]) : "";
+        if (!projectId || seen.has(projectId)) {
+          return;
+        }
+        seen.add(projectId);
+        listings.push({
+          projectId,
+          title: String(link.textContent || "").trim()
+        });
+      });
+      return listings.slice(0, PROJECT_FETCH_LIMIT);
+    } catch (_err) {
+      return [];
     }
   }
 
@@ -511,6 +560,30 @@
     return currentOwnerName;
   }
 
+  async function bootstrapProjectIdsFromProfileHtml() {
+    const profileHtml = await fetchProfileHtml();
+    const listings = parseProjectListingsFromProfileHtml(profileHtml);
+    if (!listings.length) {
+      return [];
+    }
+
+    const ids = [];
+    let changedTitles = false;
+    const mergedTitles = { ...projectTitleById };
+    listings.forEach((listing) => {
+      ids.push(String(listing.projectId));
+      if (listing.title && mergedTitles[String(listing.projectId)] !== listing.title) {
+        mergedTitles[String(listing.projectId)] = listing.title;
+        changedTitles = true;
+      }
+    });
+    if (changedTitles) {
+      projectTitleById = mergedTitles;
+    }
+    replaceKnownProjectIds(ids);
+    return ids;
+  }
+
   async function harvestProjectMetricsFromFarmTiles() {
     if (harvestInFlight) {
       return [];
@@ -557,8 +630,16 @@
   }
 
   function requestBackgroundHarvest() {
-    return new Promise((resolve) => {
+    if (hiddenHarvestRequestPromise) {
+      return hiddenHarvestRequestPromise;
+    }
+    if (Date.now() < hiddenHarvestDisabledUntil) {
+      return Promise.resolve([]);
+    }
+
+    hiddenHarvestRequestPromise = new Promise((resolve) => {
       if (!isExtensionContextValid() || typeof chrome?.runtime?.sendMessage !== "function") {
+        hiddenHarvestDisabledUntil = Date.now() + HIDDEN_HARVEST_FAILURE_BACKOFF_MS;
         resolve([]);
         return;
       }
@@ -567,29 +648,39 @@
         chrome.runtime.sendMessage({ type: "macondo-utils-run-hidden-harvest" }, (response) => {
           try {
             if (chrome.runtime.lastError) {
+              hiddenHarvestDisabledUntil = Date.now() + HIDDEN_HARVEST_FAILURE_BACKOFF_MS;
               resolve([]);
               return;
             }
           } catch (_err) {
+            hiddenHarvestDisabledUntil = Date.now() + HIDDEN_HARVEST_FAILURE_BACKOFF_MS;
             resolve([]);
             return;
           }
           if (!response?.ok || !Array.isArray(response.metrics)) {
+            hiddenHarvestDisabledUntil = Date.now() + HIDDEN_HARVEST_FAILURE_BACKOFF_MS;
             resolve([]);
             return;
           }
+          hiddenHarvestDisabledUntil = response.metrics.length ? 0 : Date.now() + HIDDEN_HARVEST_FAILURE_BACKOFF_MS;
           resolve(response.metrics);
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (/Extension context invalidated/i.test(message)) {
           console.warn(`${DEBUG_PREFIX} background harvest skipped because extension context was invalidated`);
+          hiddenHarvestDisabledUntil = Date.now() + HIDDEN_HARVEST_FAILURE_BACKOFF_MS;
           resolve([]);
           return;
         }
+        hiddenHarvestDisabledUntil = Date.now() + HIDDEN_HARVEST_FAILURE_BACKOFF_MS;
         resolve([]);
       }
+    }).finally(() => {
+      hiddenHarvestRequestPromise = null;
     });
+
+    return hiddenHarvestRequestPromise;
   }
 
   async function bootstrapProjectIdsFromHiddenHarvestOnce(force = false) {
@@ -602,6 +693,13 @@
     }
 
     const visibleTileCount = getVisibleFarmTileCount();
+    const discoveredFromProfile = await bootstrapProjectIdsFromProfileHtml();
+    if (discoveredFromProfile.length >= Math.max(1, visibleTileCount)) {
+      projectIdsBootstrapped = true;
+      writeProjectIdBootstrapCache(true);
+      return;
+    }
+
     const needsInitialHarvest = !projectIdsBootstrapped && !projectTileOrder.length;
     const needsRecoveryHarvest = force || (visibleTileCount > 0 && projectTileOrder.length > 0 && visibleTileCount > projectTileOrder.length);
     if (!needsInitialHarvest && !needsRecoveryHarvest) {
@@ -613,7 +711,10 @@
       return;
     }
 
-    applyHarvestedProjectMetrics(harvested, { markBootstrapped: true });
+    applyHarvestedProjectMetrics(harvested, {
+      markBootstrapped: true,
+      expectedTileCount: visibleTileCount
+    });
   }
 
   function applyHarvestedProjectMetrics(harvested, options = {}) {
@@ -629,6 +730,7 @@
     const mergedMeta = { ...projectMetaById };
     const titlesBefore = JSON.stringify(projectTitleById);
     const metaBefore = JSON.stringify(projectMetaById);
+    const expectedTileCount = Math.max(0, Math.round(Number(options?.expectedTileCount) || 0));
 
     harvested.forEach((metrics) => {
       weightedRateSum += (metrics.hours || 0) * (metrics.goldPerHour || 0);
@@ -643,7 +745,9 @@
       }
     });
 
-    if (harvestedIds.length) {
+    const hasCompleteHarvestOrder = harvestedIds.length > 0 && (!expectedTileCount || harvestedIds.length >= expectedTileCount);
+
+    if (hasCompleteHarvestOrder) {
       projectTileOrder = harvestedIds;
       writeProjectTileOrderCache(projectTileOrder);
       if (markBootstrapped) {
@@ -2424,6 +2528,7 @@
       const fallbackOrder = projectTileOrder.length
         ? projectTileOrder
         : getProjectIdsFromFarmTiles(projectsRoot);
+      const hasValidatedFallbackOrder = fallbackOrder.length === tiles.length && tiles.length > 0;
 
       const layerRect = layer.getBoundingClientRect();
 
@@ -2434,7 +2539,7 @@
       tile.dataset.muTileId = tileId;
       seen.add(tileId);
 
-      if (!tile.getAttribute("data-mu-project-id") && fallbackOrder[index]) {
+      if (!tile.getAttribute("data-mu-project-id") && hasValidatedFallbackOrder && fallbackOrder[index]) {
         tile.setAttribute("data-mu-project-id", String(fallbackOrder[index]));
       }
 
@@ -3190,24 +3295,28 @@
       const mergedTitles = { ...projectTitleById };
       const mergedMeta = { ...projectMetaById };
 
-      for (const projectId of projectIds) {
+      const fetchedProjects = await mapWithConcurrency(projectIds, 8, async (projectId) => {
         try {
           const project = await fetchProjectApi(projectId);
-          if (!project) {
-            continue;
-          }
-          const title = String(project.name || "").trim();
-          if (title) {
-            mergedTitles[String(projectId)] = title;
-          }
-          const meta = buildProjectMetaFromApi(project, mergedMeta[String(projectId)] || null, secondsByName);
-          if (meta) {
-            mergedMeta[String(projectId)] = meta;
-          }
+          return { projectId, project };
         } catch (_err) {
-          continue;
+          return { projectId, project: null };
         }
-      }
+      });
+
+      fetchedProjects.forEach(({ projectId, project }) => {
+        if (!project) {
+          return;
+        }
+        const title = String(project.name || "").trim();
+        if (title) {
+          mergedTitles[String(projectId)] = title;
+        }
+        const meta = buildProjectMetaFromApi(project, mergedMeta[String(projectId)] || null, secondsByName);
+        if (meta) {
+          mergedMeta[String(projectId)] = meta;
+        }
+      });
 
       const titlesBefore = JSON.stringify(projectTitleById);
       const titlesAfter = JSON.stringify(mergedTitles);
@@ -3362,13 +3471,6 @@
         allowUntargeted: true
       },
       {
-        id: "labels",
-        view: "dashboard",
-        title: "Project labels are on the farm now",
-        body: "Each project tile can show time, streak, and estimated coins without opening anything.",
-        target: () => document.querySelector(`#${PROJECT_LABEL_LAYER_ID} .mu-ground-label`)
-      },
-      {
         id: "streak",
         view: "dashboard",
         title: "Streak details open right here",
@@ -3409,6 +3511,13 @@
         title: "Settings live here",
         body: "These toggles control labels and HUD visibility. You can always reopen the walkthrough from here.",
         target: () => document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`)
+      },
+      {
+        id: "labels",
+        view: "dashboard",
+        title: "Project labels are on the farm now",
+        body: "Each project tile can show time, streak, and estimated coins without opening anything.",
+        target: () => document.querySelector(`#${PROJECT_LABEL_LAYER_ID} .mu-ground-label`)
       }
       ]
     };
@@ -3467,7 +3576,15 @@
   }
 
   function findShopEstimateNode() {
-    return Array.from(document.querySelectorAll(`${SHOP_CARD_SELECTOR} span[title]`)).find((node) => /Calculated with .* effective gold\/hour/i.test(String(node.getAttribute("title") || ""))) || null;
+    const cards = Array.from(document.querySelectorAll(SHOP_CARD_SELECTOR));
+    for (const card of cards) {
+      const hoursSpan = Array.from(card.querySelectorAll("span"))
+        .find((span) => /[>›]\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|m|h)\b/i.test(span.textContent || ""));
+      if (hoursSpan instanceof HTMLElement && /Calculated with .* effective gold\/hour/i.test(String(hoursSpan.getAttribute("title") || ""))) {
+        return hoursSpan;
+      }
+    }
+    return null;
   }
 
   function findShopStarButton() {
@@ -3537,6 +3654,13 @@
       const hud = document.getElementById("macondo-utils-goals-mini");
       const union = getOnboardingUnionRect([hud], 14, 0);
       return union ? [union] : [];
+    }
+    if (step.id === "shop-estimates") {
+      const estimateNode = findShopEstimateNode();
+      const cardRect = getOnboardingRectForElement(estimateNode?.closest(SHOP_CARD_SELECTOR), 14);
+      if (cardRect) {
+        return [cardRect];
+      }
     }
     if (step.id === "shop-goal-modes") {
       const controlsRect = getOnboardingRectForElement(document.querySelector("#macondo-utils-goals-mini .mu-goals-mini-controls-row"), 10);
