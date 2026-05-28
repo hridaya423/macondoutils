@@ -1390,6 +1390,7 @@
       totalHours: result.totalHours,
       projectIds: result.projectIds
     });
+    updateDashboardAverageRateRow();
     updateShopCardHours();
     queueGoalsMiniRender();
     refreshGoalOrderStatus();
@@ -4041,21 +4042,37 @@
       return visibleRows[0] || null;
     }
 
+    function findDashboardRateFooter(anchorRow) {
+      const mount = anchorRow?.parentElement;
+      if (!(mount instanceof HTMLElement)) {
+        return null;
+      }
+      return Array.from(mount.children).find((node) => {
+        if (!(node instanceof HTMLElement) || node === anchorRow) {
+          return false;
+        }
+        const text = String(node.textContent || "").toLowerCase();
+        return text.includes("on average you earn about") && text.includes("gold per hour");
+      }) || null;
+    }
+
     const openModal = getOpenModalElement();
     const modalCurrencyRow = findCurrencyRow(openModal);
     if (modalCurrencyRow && modalCurrencyRow.parentElement) {
+      const modalPanel = modalCurrencyRow.parentElement;
       return {
-        mount: modalCurrencyRow.parentElement,
-        afterNode: modalCurrencyRow,
+        mount: modalPanel.parentElement || modalPanel,
+        afterNode: modalPanel,
         mode: "currency-row"
       };
     }
 
     const currencyRow = findCurrencyRow(document);
     if (currencyRow && currencyRow.parentElement) {
+      const panel = currencyRow.parentElement;
       return {
-        mount: currencyRow.parentElement,
-        afterNode: currencyRow,
+        mount: panel.parentElement || panel,
+        afterNode: panel,
         mode: "currency-row"
       };
     }
@@ -4072,6 +4089,36 @@
     }
 
     return null;
+  }
+
+  function findDashboardAverageRateRow() {
+    return Array.from(document.querySelectorAll("div")).find((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const text = String(node.textContent || "").toLowerCase();
+      return text.includes("on average you earn about") && text.includes("gold per hour of shipped work");
+    }) || null;
+  }
+
+  function updateDashboardAverageRateRow() {
+    if (!Number.isFinite(effectiveGoldPerHour) || effectiveGoldPerHour <= 0) {
+      return;
+    }
+    const row = findDashboardAverageRateRow();
+    if (!(row instanceof HTMLElement)) {
+      return;
+    }
+    const textNode = Array.from(row.querySelectorAll("span")).find((span) => /on average you earn about/i.test(span.textContent || ""));
+    if (!(textNode instanceof HTMLElement)) {
+      return;
+    }
+    const nextText = `On average you earn about ${Math.round(effectiveGoldPerHour)} gold per hour of shipped work.`;
+    if (textNode.textContent !== nextText) {
+      withObserverSuppressed(() => {
+        textNode.textContent = nextText;
+      });
+    }
   }
 
   function queueGoalsMiniRender() {
