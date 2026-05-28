@@ -48,6 +48,8 @@
   const PROJECT_LABEL_TEXT_MAX = 26;
   const CREATE_MODAL_ID = "macondo-utils-create-modal";
   const CREATE_STYLE_ID = "macondo-utils-create-style";
+  const DASHBOARD_TOP_BAR_SELECTOR = "[class*='absolute'][class*='top-0']";
+  const SETTINGS_BUTTON_TARGET_SELECTOR = `${DASHBOARD_TOP_BAR_SELECTOR} [class*='ml-auto'], ${DASHBOARD_TOP_BAR_SELECTOR} [class*='items-center'][class*='justify-between'] > div:last-child`;
   let createTilePointerState = null;
   let suppressNextCreateTileClickUntil = 0;
   let projectLabelsQueued = false;
@@ -62,6 +64,7 @@
   let goalOrderedItemIds = new Set();
   let goalOrderSyncInFlight = false;
   let lastGoalOrderSyncAt = 0;
+  let lastProjectLabelsSignature = "";
   let goalsMiniQueued = false;
   let lastGoalsMiniSignature = "";
   let goalsViewMode = "actual";
@@ -210,6 +213,86 @@
     } catch (_err) {
       return false;
     }
+  }
+
+  function nodeMatchesOrContains(node, selector) {
+    if (!(node instanceof Element)) {
+      return false;
+    }
+    return node.matches(selector) || Boolean(node.querySelector(selector));
+  }
+
+  function nodeTouchesProjectUi(node) {
+    if (!(node instanceof Element)) {
+      return false;
+    }
+    if (node.closest("#projects")) {
+      return true;
+    }
+    return nodeMatchesOrContains(node, "#projects, .farm-tile-project, .modal-frame, a[href*='/projects/'], a[href^='/u/']");
+  }
+
+  function nodeTouchesShopUi(node) {
+    if (!(node instanceof Element)) {
+      return false;
+    }
+    if (node.closest(SHOP_CARD_SELECTOR) || node.closest(".donkey-area")) {
+      return true;
+    }
+    return nodeMatchesOrContains(node, `${SHOP_CARD_SELECTOR}, .donkey-area, .modal-frame, button[aria-label*='Star'], button[aria-label*='Unstar']`);
+  }
+
+  function nodeTouchesDashboardChrome(node) {
+    if (!(node instanceof Element)) {
+      return false;
+    }
+    if (node.closest(DASHBOARD_TOP_BAR_SELECTOR)) {
+      return true;
+    }
+    return nodeMatchesOrContains(node, `${DASHBOARD_TOP_BAR_SELECTOR}, img[src*='money'], img[src*='starfruit'], button[title], button[aria-label]`);
+  }
+
+  function summarizeMutationWork(records) {
+    const work = {
+      project: false,
+      shop: false,
+      chrome: false,
+      goals: false,
+      onboarding: false,
+      refresh: false
+    };
+
+    const inspectNode = (node) => {
+      if (!(node instanceof Element)) {
+        return;
+      }
+
+      if (!work.project && nodeTouchesProjectUi(node)) {
+        work.project = true;
+        work.refresh = true;
+      }
+      if (!work.shop && nodeTouchesShopUi(node)) {
+        work.shop = true;
+      }
+      if (!work.chrome && nodeTouchesDashboardChrome(node)) {
+        work.chrome = true;
+      }
+      if (!work.goals && projectGoals.length) {
+        if (work.shop || work.chrome || nodeMatchesOrContains(node, "#macondo-utils-goals-mini")) {
+          work.goals = true;
+        }
+      }
+    };
+
+    records.some((record) => {
+      inspectNode(record.target);
+      Array.from(record.addedNodes || []).forEach(inspectNode);
+      Array.from(record.removedNodes || []).forEach(inspectNode);
+      return work.project && work.shop && work.chrome && work.goals;
+    });
+
+    work.onboarding = Boolean(document.getElementById(ONBOARDING_ROOT_ID)) && (work.project || work.shop || work.chrome || work.goals);
+    return work;
   }
 
   function getCurrentGoldPerHourFromModal() {
@@ -2300,7 +2383,7 @@
 
   function ensureProjectLabelSettingsButton() {
     let root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
-    let target = document.querySelector("[class*='absolute'][class*='top-0'] [class*='ml-auto'], [class*='absolute'][class*='top-0'] [class*='items-center'][class*='justify-between'] > div:last-child");
+    let target = document.querySelector(SETTINGS_BUTTON_TARGET_SELECTOR);
     if (!(target instanceof HTMLElement)) {
       let fallback = document.getElementById("macondo-utils-settings-fallback-mount");
       if (!(fallback instanceof HTMLElement)) {
@@ -2508,6 +2591,7 @@
   function syncProjectGroundLabels() {
     const projectsRoot = document.getElementById("projects");
     if (!projectsRoot) {
+      lastProjectLabelsSignature = "";
       return;
     }
 
@@ -2531,42 +2615,61 @@
         : getProjectIdsFromFarmTiles(projectsRoot);
       const hasValidatedFallbackOrder = fallbackOrder.length === tiles.length && tiles.length > 0;
 
-      const layerRect = layer.getBoundingClientRect();
-
       const tileModels = [];
       const seen = new Set();
       tiles.forEach((tile, index) => {
-      const tileId = tile.dataset.muTileId || `tile-${index}`;
-      tile.dataset.muTileId = tileId;
-      seen.add(tileId);
+        const tileId = tile.dataset.muTileId || `tile-${index}`;
+        tile.dataset.muTileId = tileId;
+        seen.add(tileId);
 
-      if (!tile.getAttribute("data-mu-project-id") && hasValidatedFallbackOrder && fallbackOrder[index]) {
-        tile.setAttribute("data-mu-project-id", String(fallbackOrder[index]));
-      }
+        if (!tile.getAttribute("data-mu-project-id") && hasValidatedFallbackOrder && fallbackOrder[index]) {
+          tile.setAttribute("data-mu-project-id", String(fallbackOrder[index]));
+        }
 
-      const rawTitle = guessProjectTitleFromTile(tile);
-      if (!rawTitle) {
+        const rawTitle = guessProjectTitleFromTile(tile);
+        if (!rawTitle) {
+          return;
+        }
+
+        const left = tile.offsetLeft;
+        const top = tile.offsetTop;
+        const tileWidth = tile.offsetWidth || 120;
+        const tileHeight = tile.offsetHeight || 90;
+        const metaLines = formatLabelMetaLines(getProjectMetaFromTile(tile));
+
+        tileModels.push({
+          tile,
+          tileId,
+          rawTitle,
+          lines: splitProjectLabelLines(rawTitle),
+          metaLines,
+          left,
+          top,
+          width: tileWidth,
+          height: tileHeight,
+          centerX: left + tileWidth / 2,
+          centerY: top + tileHeight / 2
+        });
+      });
+
+      const nextSignature = JSON.stringify(tileModels.map((tileModel) => ({
+        tileId: tileModel.tileId,
+        projectId: String(tileModel.tile.getAttribute("data-mu-project-id") || ""),
+        rawTitle: tileModel.rawTitle,
+        metaLines: tileModel.metaLines,
+        left: tileModel.left,
+        top: tileModel.top,
+        width: tileModel.width,
+        height: tileModel.height
+      })));
+      const hasAllExistingLabels = existing.size === tileModels.length
+        && tileModels.every((tileModel) => existing.has(tileModel.tileId));
+
+      if (nextSignature === lastProjectLabelsSignature && hasAllExistingLabels) {
         return;
       }
 
-      const left = tile.offsetLeft;
-      const top = tile.offsetTop;
-      const tileWidth = tile.offsetWidth || 120;
-      const tileHeight = tile.offsetHeight || 90;
-
-      tileModels.push({
-        tile,
-        tileId,
-        rawTitle,
-        lines: splitProjectLabelLines(rawTitle),
-        left,
-        top,
-        width: tileWidth,
-        height: tileHeight,
-        centerX: left + tileWidth / 2,
-        centerY: top + tileHeight / 2
-      });
-    });
+      const layerRect = layer.getBoundingClientRect();
 
       const bounds = {
         width: projectsRoot.clientWidth || projectsRoot.offsetWidth || 0,
@@ -2599,9 +2702,7 @@
           inner.appendChild(lineNode);
         });
 
-        const tileMeta = getProjectMetaFromTile(tileModel.tile);
-        const metaLines = formatLabelMetaLines(tileMeta);
-        metaLines.forEach((metaText) => {
+        tileModel.metaLines.forEach((metaText) => {
           const metaNode = document.createElement("span");
           metaNode.className = "mu-ground-label-meta";
           metaNode.textContent = metaText;
@@ -2640,6 +2741,8 @@
           node.remove();
         }
       });
+
+      lastProjectLabelsSignature = nextSignature;
     });
   }
 
@@ -4771,6 +4874,7 @@
       const cached = readCachedRate();
       if (cached && (!Number.isFinite(effectiveGoldPerHour) || effectiveGoldPerHour <= 0)) {
         effectiveGoldPerHour = cached.effectiveGoldPerHour;
+        updateDashboardAverageRateRow();
         if (pendingRender) {
           pendingRender = false;
           updateShopCardHours();
@@ -4825,15 +4929,27 @@
     if (areMutationsOnlyFromExtensionUi(records)) {
       return;
     }
-    scheduleRender();
-    queueProjectGroundLabelsSync();
-    queueEnsureProjectLabelSettingsButton();
-    ensureStreakHoverInteraction();
-    if (shouldRefreshGoalsFromMutations(records)) {
+    const work = summarizeMutationWork(records);
+    if (work.shop) {
+      scheduleRender();
+    }
+    if (work.project) {
+      queueProjectGroundLabelsSync();
+    }
+    if (work.project || work.chrome) {
+      queueEnsureProjectLabelSettingsButton();
+    }
+    if (work.chrome) {
+      updateDashboardAverageRateRow();
+      ensureStreakHoverInteraction();
+    }
+    if (work.goals && shouldRefreshGoalsFromMutations(records)) {
       queueGoalsMiniRender();
     }
-    queueOnboardingRender();
-    if (hasProjectContextOnPage()) {
+    if (work.onboarding) {
+      queueOnboardingRender();
+    }
+    if (work.refresh && hasProjectContextOnPage()) {
       scheduleRefresh("dom-mutation-project-context");
     }
   });
