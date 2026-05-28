@@ -3406,8 +3406,21 @@
     return document.querySelector(".donkey-area") || null;
   }
 
+  function getShopModalElement() {
+    const modal = getOpenModalElement();
+    if (!(modal instanceof HTMLElement)) {
+      return null;
+    }
+    const hasShopCards = Boolean(modal.querySelector(SHOP_CARD_SELECTOR));
+    const hasProjectLinks = Boolean(modal.querySelector("a[href*='/projects/']"));
+    if (hasShopCards && !hasProjectLinks) {
+      return modal;
+    }
+    return null;
+  }
+
   function isShopModalOpen() {
-    return Boolean(document.querySelector(".modal-frame .bg-parchment"));
+    return Boolean(getShopModalElement());
   }
 
   function openShopModalFromDashboard() {
@@ -3420,7 +3433,9 @@
   }
 
   function closeShopModalToDashboard() {
-    const backButton = Array.from(document.querySelectorAll(".modal-frame button")).find((button) =>
+    const modal = getShopModalElement();
+    const buttonScope = modal || document;
+    const backButton = Array.from(buttonScope.querySelectorAll("button")).find((button) =>
       /Back to farm/i.test(button.textContent || "")
     );
     if (backButton instanceof HTMLButtonElement) {
