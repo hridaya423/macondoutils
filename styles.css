@@ -536,7 +536,7 @@
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  min-width: 210px;
+  min-width: 280px;
   padding: 12px 14px;
   border: 3px solid #6f4f2b;
   background: rgba(247, 228, 188, 0.985);

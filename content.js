@@ -72,6 +72,7 @@
   let onboardingQueued = false;
   let onboardingTargetNode = null;
   let onboardingAutoStarDone = false;
+  let settingsButtonQueued = false;
   let projectLabelPrefs = {
     showHours: true,
     showStreak: true,
@@ -83,6 +84,18 @@
     showHudProgressStat: true,
     showHudRemainingStat: true,
     showHudEtaStat: true
+  };
+  const LABEL_PLACEMENT_OFFSETS = {
+    bottom: { x: 17, y: -14 },
+    top: { x: -42, y: -50 },
+    left: { x: 42, y: 14 },
+    right: { x: -52, y: -47 }
+  };
+  const LABEL_PLACEMENT_TILTS = {
+    bottom: 3,
+    top: 2,
+    left: -7,
+    right: -9
   };
   const LEVEL_META = {
     software: {
@@ -1725,14 +1738,45 @@
       });
   }
 
+  function getLabelPlacementOffsets(placement) {
+    if (placement === "top") {
+      return LABEL_PLACEMENT_OFFSETS.top;
+    }
+    if (placement === "left") {
+      return LABEL_PLACEMENT_OFFSETS.left;
+    }
+    if (placement === "right") {
+      return LABEL_PLACEMENT_OFFSETS.right;
+    }
+    return LABEL_PLACEMENT_OFFSETS.bottom;
+  }
+
+  function getLabelPlacementTilt(placement) {
+    if (placement === "top") {
+      return LABEL_PLACEMENT_TILTS.top;
+    }
+    if (placement === "left") {
+      return LABEL_PLACEMENT_TILTS.left;
+    }
+    if (placement === "right") {
+      return LABEL_PLACEMENT_TILTS.right;
+    }
+    return LABEL_PLACEMENT_TILTS.bottom;
+  }
+
   function getTileLabelCandidate(tileModel, placement) {
-    const anchor = placement === "bottom"
+    const baseAnchor = placement === "bottom"
       ? { x: tileModel.left + tileModel.width * 0.62, y: tileModel.top + tileModel.height + 9 }
       : placement === "top"
         ? { x: tileModel.left + tileModel.width * 0.58, y: tileModel.top - 9 }
         : placement === "right"
           ? { x: tileModel.left + tileModel.width + 10, y: tileModel.top + tileModel.height * 0.64 }
           : { x: tileModel.left - 10, y: tileModel.top + tileModel.height * 0.64 };
+    const offsets = getLabelPlacementOffsets(placement);
+    const anchor = {
+      x: baseAnchor.x + offsets.x,
+      y: baseAnchor.y + offsets.y
+    };
 
     return { placement, anchor };
   }
@@ -2150,10 +2194,21 @@
   }
 
   function ensureProjectLabelSettingsButton() {
-    let root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);  
-    const target = document.querySelector("[class*='absolute'][class*='top-0'] [class*='ml-auto'], [class*='absolute'][class*='top-0'] [class*='items-center'][class*='justify-between'] > div:last-child");
-    if (!target) {
-      return;
+    let root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
+    let target = document.querySelector("[class*='absolute'][class*='top-0'] [class*='ml-auto'], [class*='absolute'][class*='top-0'] [class*='items-center'][class*='justify-between'] > div:last-child");
+    if (!(target instanceof HTMLElement)) {
+      let fallback = document.getElementById("macondo-utils-settings-fallback-mount");
+      if (!(fallback instanceof HTMLElement)) {
+        fallback = document.createElement("div");
+        fallback.id = "macondo-utils-settings-fallback-mount";
+        fallback.style.position = "fixed";
+        fallback.style.top = "16px";
+        fallback.style.right = "16px";
+        fallback.style.zIndex = "2147483000";
+        fallback.style.pointerEvents = "auto";
+        document.body.appendChild(fallback);
+      }
+      target = fallback;
     }
 
     if (root && root.parentElement !== target) {
@@ -2334,6 +2389,17 @@
     }
   }
 
+  function queueEnsureProjectLabelSettingsButton() {
+    if (settingsButtonQueued) {
+      return;
+    }
+    settingsButtonQueued = true;
+    requestAnimationFrame(() => {
+      settingsButtonQueued = false;
+      ensureProjectLabelSettingsButton();
+    });
+  }
+
   function syncProjectGroundLabels() {
     const projectsRoot = document.getElementById("projects");
     if (!projectsRoot) {
@@ -2345,24 +2411,25 @@
       return;
     }
 
-    const tiles = Array.from(projectsRoot.querySelectorAll(".farm-tile-project"));
-    const existing = new Map();
-    Array.from(layer.querySelectorAll(".mu-ground-label")).forEach((el) => {
-      const id = el.getAttribute("data-tile-id");
-      if (id) {
-        existing.set(id, el);
-      }
-    });
+    withObserverSuppressed(() => {
+      const tiles = Array.from(projectsRoot.querySelectorAll(".farm-tile-project"));
+      const existing = new Map();
+      Array.from(layer.querySelectorAll(".mu-ground-label")).forEach((el) => {
+        const id = el.getAttribute("data-tile-id");
+        if (id) {
+          existing.set(id, el);
+        }
+      });
 
-    const fallbackOrder = projectTileOrder.length
-      ? projectTileOrder
-      : getProjectIdsFromFarmTiles(projectsRoot);
+      const fallbackOrder = projectTileOrder.length
+        ? projectTileOrder
+        : getProjectIdsFromFarmTiles(projectsRoot);
 
-    const layerRect = layer.getBoundingClientRect();
+      const layerRect = layer.getBoundingClientRect();
 
-    const tileModels = [];
-    const seen = new Set();
-    tiles.forEach((tile, index) => {
+      const tileModels = [];
+      const seen = new Set();
+      tiles.forEach((tile, index) => {
       const tileId = tile.dataset.muTileId || `tile-${index}`;
       tile.dataset.muTileId = tileId;
       seen.add(tileId);
@@ -2395,19 +2462,19 @@
       });
     });
 
-    const bounds = {
-      width: projectsRoot.clientWidth || projectsRoot.offsetWidth || 0,
-      height: projectsRoot.clientHeight || projectsRoot.offsetHeight || 0
-    };
-    const visualObstacleRects = getProjectVisualObstacleRects(projectsRoot);
-    const placedLabelRects = [];
-    const sharedSideByTile = getClusterSharedSideByTile(tileModels, bounds);
-    const forceBottomByTile = getHorizontalClusterForceBottomByTile(tileModels);
+      const bounds = {
+        width: projectsRoot.clientWidth || projectsRoot.offsetWidth || 0,
+        height: projectsRoot.clientHeight || projectsRoot.offsetHeight || 0
+      };
+      const visualObstacleRects = getProjectVisualObstacleRects(projectsRoot);
+      const placedLabelRects = [];
+      const sharedSideByTile = getClusterSharedSideByTile(tileModels, bounds);
+      const forceBottomByTile = getHorizontalClusterForceBottomByTile(tileModels);
 
-    tileModels
-      .slice()
-      .sort((a, b) => a.top - b.top || a.left - b.left)
-      .forEach((tileModel) => {
+      tileModels
+        .slice()
+        .sort((a, b) => a.top - b.top || a.left - b.left)
+        .forEach((tileModel) => {
         let label = existing.get(tileModel.tileId);
         if (!label) {
           label = document.createElement("div");
@@ -2453,15 +2520,20 @@
           label.setAttribute("data-placement", chosenPlacement.placement);
           label.style.left = `${Math.round(chosenPlacement.anchor.x)}px`;
           label.style.top = `${Math.round(chosenPlacement.anchor.y)}px`;
+          const tilt = getLabelPlacementTilt(chosenPlacement.placement);
+          inner.style.transform = chosenPlacement.placement === "left" || chosenPlacement.placement === "right"
+            ? `rotate(${Math.round(-14 + tilt)}deg)`
+            : `rotate(${Math.round(-24 + tilt)}deg)`;
           placedLabelRects.push(chosenPlacement.rect);
         }
         label.style.visibility = "";
-      });
+        });
 
-    existing.forEach((node, id) => {
-      if (!seen.has(id)) {
-        node.remove();
-      }
+      existing.forEach((node, id) => {
+        if (!seen.has(id)) {
+          node.remove();
+        }
+      });
     });
   }
 
@@ -3924,6 +3996,29 @@
     });
   }
 
+  function isExtensionManagedNode(node) {
+    if (!(node instanceof Element)) {
+      return false;
+    }
+    return Boolean(node.closest(`#${PROJECT_LABEL_LAYER_ID}, #${PROJECT_LABEL_SETTINGS_ID}, #${ONBOARDING_ROOT_ID}, #${STREAK_HOVER_CARD_ID}, #macondo-utils-goals-mini`));
+  }
+
+  function areMutationsOnlyFromExtensionUi(records) {
+    if (!Array.isArray(records) || !records.length) {
+      return false;
+    }
+    return records.every((record) => {
+      if (!isExtensionManagedNode(record.target)) {
+        return false;
+      }
+      const addedOk = Array.from(record.addedNodes || []).every((node) => !(node instanceof Element) || isExtensionManagedNode(node));
+      if (!addedOk) {
+        return false;
+      }
+      return Array.from(record.removedNodes || []).every((node) => !(node instanceof Element) || isExtensionManagedNode(node));
+    });
+  }
+
   function handleShopStarToggleClick(event) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) {
@@ -4556,9 +4651,12 @@
     if (suppressedObserverMutations > 0) {
       return;
     }
+    if (areMutationsOnlyFromExtensionUi(records)) {
+      return;
+    }
     scheduleRender();
     queueProjectGroundLabelsSync();
-    ensureProjectLabelSettingsButton();
+    queueEnsureProjectLabelSettingsButton();
     ensureStreakHoverInteraction();
     if (shouldRefreshGoalsFromMutations(records)) {
       queueGoalsMiniRender();
