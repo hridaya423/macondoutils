@@ -26,6 +26,31 @@
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
   const HIDDEN_HARVEST_FAILURE_BACKOFF_MS = 60 * 1000;
+  const FARM_THEME_MAX_RASTER_PIXELS = 4200000;
+  const CATPUCCIN_BACKGROUND_ASSET_PATH = "themeassets/catpuccin/catpuccin_background.png";
+  const CATPUCCIN_HARDCODED_ASSET_PATH_MAP = {
+    "/images/dashboard/en/donkey.webp": "themeassets/catpuccin/images/dashboard/en/donkey.png",
+    "/images/dashboard/en/house.webp": "themeassets/catpuccin/images/dashboard/en/house.png",
+    "/images/dashboard/en/explore.webp": "themeassets/catpuccin/images/dashboard/en/explore.png",
+    "/images/tierra/ground_tile.webp": "themeassets/catpuccin/images/tierra/ground_tile.png",
+    "/images/dashboard/palma.webp": "themeassets/catpuccin/images/dashboard/palma.png",
+    "/images/fruits/mango/etapa_1.webp": "themeassets/catpuccin/images/fruits/mango/etapa_1.png",
+    "/images/fruits/mango/etapa_2.webp": "themeassets/catpuccin/images/fruits/mango/etapa_2.png",
+    "/images/fruits/mango/etapa_3.webp": "themeassets/catpuccin/images/fruits/mango/etapa_3.png",
+    "/images/fruits/mango/etapa_4.webp": "themeassets/catpuccin/images/fruits/mango/etapa_4.png",
+    "/images/fruits/pineapple/etapa_1.webp": "themeassets/catpuccin/images/fruits/pineapple/etapa_1.png",
+    "/images/fruits/pineapple/etapa_2.webp": "themeassets/catpuccin/images/fruits/pineapple/etapa_2.png",
+    "/images/fruits/pineapple/etapa_3.webp": "themeassets/catpuccin/images/fruits/pineapple/etapa_3.png",
+    "/images/fruits/pineapple/etapa_4.webp": "themeassets/catpuccin/images/fruits/pineapple/etapa_4.png",
+    "/images/fruits/papaya/etapa_1.webp": "themeassets/catpuccin/images/fruits/papaya/etapa_1.png",
+    "/images/fruits/papaya/etapa_2.webp": "themeassets/catpuccin/images/fruits/papaya/etapa_2.png",
+    "/images/fruits/papaya/etapa_3.webp": "themeassets/catpuccin/images/fruits/papaya/etapa_3.png",
+    "/images/fruits/papaya/etapa_4.webp": "themeassets/catpuccin/images/fruits/papaya/etapa_4.png",
+    "/images/fruits/cocoa/etapa_1.webp": "themeassets/catpuccin/images/fruits/cocoa/etapa_1.png",
+    "/images/fruits/cocoa/etapa_2.webp": "themeassets/catpuccin/images/fruits/cocoa/etapa_2.png",
+    "/images/fruits/cocoa/etapa_3.webp": "themeassets/catpuccin/images/fruits/cocoa/etapa_3.png",
+    "/images/fruits/cocoa/etapa_4.webp": "themeassets/catpuccin/images/fruits/cocoa/etapa_4.png"
+  };
   let effectiveGoldPerHour = null;
   let refreshInFlight = false;
   let pendingRender = false;
@@ -75,6 +100,10 @@
   let streakHoverCardHideTimer = null;
   let streakHoverDataPromise = null;
   let streakHoverData = null;
+  let lastFarmThemeDebugSignature = "";
+  let farmThemeRefreshQueued = false;
+  let farmThemeRefreshToken = 0;
+  const farmThemeCanvasOriginals = new WeakMap();
   let onboardingQueued = false;
   let onboardingTargetNode = null;
   let onboardingAutoStarDone = false;
@@ -89,7 +118,8 @@
     showHudGoalsStat: true,
     showHudProgressStat: true,
     showHudRemainingStat: true,
-    showHudEtaStat: true
+    showHudEtaStat: true,
+    theme: "default"
   };
   const LABEL_PLACEMENT_OFFSETS = {
     bottom: { x: 17, y: -14 },
@@ -125,6 +155,711 @@
 
   function normalizeGoalsProgressMode(mode) {
     return String(mode || "").toLowerCase() === "individual" ? "individual" : "cumulative";
+  }
+
+  function normalizeTheme(value) {
+    const normalized = String(value || "").toLowerCase();
+    return normalized === "catpuccin" || normalized === "dark" || normalized === "dark mode"
+      ? "dark"
+      : "default";
+  }
+
+  function isCatpuccinThemeActive() {
+    return normalizeTheme(projectLabelPrefs.theme) === "dark";
+  }
+
+  function getStreakThemePalette() {
+    if (isCatpuccinThemeActive()) {
+      return {
+        cardBg: "#1e1e2e",
+        cardBorder: "#b4befe",
+        cardShadow: "0 18px 42px rgba(17, 17, 27, 0.46)",
+        text: "#cdd6f4",
+        subtext: "#bac2de",
+        muted: "rgba(166, 173, 200, 0.88)",
+        rule: "rgba(127, 132, 156, 0.5)",
+        panelBg: "rgba(49, 50, 68, 0.92)",
+        panelBorder: "rgba(88, 91, 112, 0.95)",
+        freezeBg: "rgba(137, 180, 250, 0.16)",
+        freezeBorder: "rgba(180, 190, 254, 0.62)",
+        freezeText: "#89b4fa",
+        active: "#fab387",
+        activeStroke: "#f38ba8",
+        frozen: "#89b4fa",
+        frozenStroke: "#74c7ec",
+        review: "#b4befe",
+        reviewStroke: "#cba6f7",
+        partial: "#f9e2af",
+        partialStroke: "#fab387",
+        inactive: "#6c7086",
+        inactiveStroke: "#9399b2",
+        chartLine: "#cba6f7",
+        chartTarget: "rgba(180, 190, 254, 0.8)",
+        chartAxis: "rgba(166, 173, 200, 0.32)",
+        chartAxisStrong: "rgba(166, 173, 200, 0.56)",
+        progressTrack: "rgba(69, 71, 90, 0.92)",
+        progressFill: "#cba6f7",
+        progressBorder: "rgba(180, 190, 254, 0.62)"
+      };
+    }
+
+    return {
+      cardBg: "#f6ead2",
+      cardBorder: "#5c3b20",
+      cardShadow: "0 16px 36px rgba(74, 48, 24, 0.22)",
+      text: "#684d3a",
+      subtext: "rgba(104,77,58,0.8)",
+      muted: "rgba(104,77,58,0.6)",
+      rule: "rgba(104,77,58,0.15)",
+      panelBg: "rgba(104,77,58,0.05)",
+      panelBorder: "rgba(104,77,58,0.2)",
+      freezeBg: "rgb(236 254 255)",
+      freezeBorder: "rgba(14,116,144,0.4)",
+      freezeText: "rgb(22 78 99)",
+      active: "#f97316",
+      activeStroke: "#c2410c",
+      frozen: "#22d3ee",
+      frozenStroke: "#0e7490",
+      review: "#7dd3fc",
+      reviewStroke: "#0369a1",
+      partial: "#fde047",
+      partialStroke: "#ca8a04",
+      inactive: "#cbd5e1",
+      inactiveStroke: "#94a3b8",
+      chartLine: "#684d3a",
+      chartTarget: "#b08f74",
+      chartAxis: "rgba(104,77,58,0.28)",
+      chartAxisStrong: "rgba(104,77,58,0.58)",
+      progressTrack: "rgba(104,77,58,0.12)",
+      progressFill: "#ea580c",
+      progressBorder: "rgba(104,77,58,0.28)"
+    };
+  }
+
+  function applySelectedTheme() {
+    const root = document.documentElement;
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    const theme = normalizeTheme(projectLabelPrefs.theme);
+    root.classList.toggle("mu-theme-catpuccin", theme === "dark");
+    syncGameWorldThemeBackground();
+    syncFarmThemeTargets();
+  }
+
+  const CATPUCCIN_BACKGROUND_STYLE_ID = "mu-catpuccin-background-rule";
+
+  function syncGameWorldThemeBackground() {
+    const assetUrl = isCatpuccinThemeActive() && chrome?.runtime?.getURL
+      ? chrome.runtime.getURL(CATPUCCIN_BACKGROUND_ASSET_PATH)
+      : "";
+    let styleEl = document.getElementById(CATPUCCIN_BACKGROUND_STYLE_ID);
+    if (!assetUrl) {
+      if (styleEl) {
+        styleEl.remove();
+      }
+      return;
+    }
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = CATPUCCIN_BACKGROUND_STYLE_ID;
+      document.documentElement.appendChild(styleEl);
+    }
+    styleEl.textContent = `.game-world[data-v-e25639c6] {
+      background: url("${assetUrl}") 0 0 / cover no-repeat !important;
+    }`;
+  }
+
+  function describeElementForDebug(node) {
+    if (!(node instanceof HTMLElement)) {
+      return "<null>";
+    }
+    const id = node.id ? `#${node.id}` : "";
+    const className = typeof node.className === "string"
+      ? `.${node.className.trim().split(/\s+/).filter(Boolean).slice(0, 3).join(".")}`
+      : "";
+    return `${node.tagName.toLowerCase()}${id}${className}`;
+  }
+
+  function clearFarmThemeTargets() {
+    Array.from(document.querySelectorAll("[data-mu-farm-root], [data-mu-farm-visual]")).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      delete node.dataset.muFarmRoot;
+      delete node.dataset.muFarmVisual;
+    });
+  }
+
+  function getFarmThemeRasterKind(node, precomputedStyle) {
+    if (!(node instanceof HTMLElement)) {
+      return "";
+    }
+    if (node instanceof HTMLCanvasElement) {
+      return "canvas";
+    }
+    if (node instanceof HTMLImageElement) {
+      return "image";
+    }
+    const style = precomputedStyle || window.getComputedStyle(node);
+    return extractFirstBackgroundImageUrl(style.backgroundImage) ? "background" : "";
+  }
+
+  function syncFarmThemeTargets() {
+    clearFarmThemeTargets();
+    if (!isCatpuccinThemeActive()) {
+      lastFarmThemeDebugSignature = "";
+      queueFarmThemeVisualRefresh();
+      return;
+    }
+
+    const projectsRoot = document.getElementById("projects");
+    if (!(projectsRoot instanceof HTMLElement)) {
+      queueFarmThemeVisualRefresh();
+      return;
+    }
+
+    let farmRoot = projectsRoot.parentElement;
+    let current = projectsRoot;
+    while (current instanceof HTMLElement && current !== document.body) {
+      const rect = current.getBoundingClientRect();
+      if (rect.width >= window.innerWidth * 0.45 && rect.height >= window.innerHeight * 0.45) {
+        farmRoot = current;
+      }
+      current = current.parentElement;
+    }
+    if (!(farmRoot instanceof HTMLElement)) {
+      farmRoot = projectsRoot;
+    }
+    farmRoot.dataset.muFarmRoot = "true";
+
+    const explicitFarmAssetSelectors = [
+      "img.donkey-img",
+      "img.explore-img",
+      "img.house-img",
+      "img.tile-img",
+      "img.plot-fruit-icon-iso",
+      "img.palma",
+      "img[src*='/images/dashboard/en/donkey.webp']",
+      "img[src*='/images/dashboard/en/explore.webp']",
+      "img[src*='/images/dashboard/en/house.webp']",
+      "img[src*='/images/tierra/ground_tile.webp']",
+      "img[src*='/images/dashboard/palma.webp']",
+      "img[src*='/images/fruits/'][src*='/etapa_1.webp']",
+      "img[src*='/images/fruits/'][src*='/etapa_2.webp']",
+      "img[src*='/images/fruits/'][src*='/etapa_3.webp']",
+      "img[src*='/images/fruits/'][src*='/etapa_4.webp']"
+    ];
+    let explicitFarmAssetIndex = 0;
+    explicitFarmAssetSelectors.forEach((selector) => {
+      Array.from(document.querySelectorAll(selector)).forEach((node) => {
+        if (!(node instanceof HTMLElement) || isExtensionManagedNode(node)) {
+          return;
+        }
+        node.dataset.muFarmVisual = `explicit-${explicitFarmAssetIndex}`;
+        explicitFarmAssetIndex += 1;
+      });
+    });
+
+    const seen = new Set();
+    const candidates = [];
+    const minWidth = Math.min(window.innerWidth * 0.35, 320);
+    const minHeight = Math.min(window.innerHeight * 0.35, 220);
+
+    function consider(node) {
+      if (!(node instanceof HTMLElement) || seen.has(node) || isExtensionManagedNode(node)) {
+        return;
+      }
+      seen.add(node);
+
+      const rect = node.getBoundingClientRect();
+      if (rect.width < minWidth || rect.height < minHeight) {
+        return;
+      }
+
+      const style = window.getComputedStyle(node);
+      if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) {
+        return;
+      }
+
+      const rasterKind = getFarmThemeRasterKind(node, style);
+      if (!rasterKind) {
+        return;
+      }
+
+      let score = (rect.width * rect.height) / Math.max(1, window.innerWidth * window.innerHeight);
+      const hasBackgroundImage = style.backgroundImage && style.backgroundImage !== "none";
+      const name = `${node.id || ""} ${typeof node.className === "string" ? node.className : ""}`;
+
+      if (hasBackgroundImage) {
+        score += 24;
+      }
+      if (rasterKind === "canvas") {
+        score += 22;
+      }
+      if (rasterKind === "image") {
+        score += 18;
+      }
+      if (rasterKind === "background") {
+        score += 14;
+      }
+      if (/background|world|viewport|pane|layer|map|farm/i.test(name)) {
+        score += 6;
+      }
+      if (style.position === "absolute" || style.position === "fixed") {
+        score += 3;
+      }
+      if (node === projectsRoot || node.contains(projectsRoot) || projectsRoot.contains(node)) {
+        score -= 6;
+      }
+
+      candidates.push({ node, score, rect, hasBackgroundImage });
+    }
+
+    consider(farmRoot);
+    Array.from(farmRoot.children).forEach((child) => {
+      consider(child);
+      Array.from(child.children).forEach((grandchild) => consider(grandchild));
+    });
+
+    candidates
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .forEach((candidate, index) => {
+        if (!candidate.node.dataset.muFarmVisual) {
+          candidate.node.dataset.muFarmVisual = index === 0 ? "primary" : index === 1 ? "secondary" : "tertiary";
+        }
+      });
+
+    const signature = candidates
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map((candidate) => `${describeElementForDebug(candidate.node)}:${candidate.score.toFixed(2)}`)
+      .join(" | ");
+    if (signature && signature !== lastFarmThemeDebugSignature) {
+      lastFarmThemeDebugSignature = signature;
+      console.debug(`${DEBUG_PREFIX} farm theme targets`, {
+        root: describeElementForDebug(farmRoot),
+        candidates: candidates
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3)
+          .map((candidate) => ({
+            node: describeElementForDebug(candidate.node),
+            score: Number(candidate.score.toFixed(2)),
+            hasBackgroundImage: candidate.hasBackgroundImage,
+            width: Math.round(candidate.rect.width),
+            height: Math.round(candidate.rect.height)
+          }))
+      });
+    }
+
+    queueFarmThemeVisualRefresh();
+  }
+
+  function clamp(value, min = 0, max = 1) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function lerp(start, end, t) {
+    return start + ((end - start) * clamp(t));
+  }
+
+  function smoothstep(min, max, value) {
+    if (max <= min) {
+      return value >= max ? 1 : 0;
+    }
+    const t = clamp((value - min) / (max - min));
+    return t * t * (3 - (2 * t));
+  }
+
+  function mixAnglesDeg(from, to, t) {
+    const amount = clamp(t);
+    const delta = ((((to - from) % 360) + 540) % 360) - 180;
+    return (from + (delta * amount) + 360) % 360;
+  }
+
+  function hueDistanceDeg(a, b) {
+    return Math.abs(((((Number(a) - Number(b)) % 360) + 540) % 360) - 180);
+  }
+
+  function hueProximity(center, width, hue) {
+    return 1 - clamp(hueDistanceDeg(hue, center) / Math.max(1, width));
+  }
+
+  function srgbChannelToLinear(value) {
+    return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+  }
+
+  function linearChannelToSrgb(value) {
+    return value <= 0.0031308 ? value * 12.92 : (1.055 * Math.pow(value, 1 / 2.4)) - 0.055;
+  }
+
+  function rgbToOklab(r, g, b) {
+    const lr = srgbChannelToLinear(clamp(r));
+    const lg = srgbChannelToLinear(clamp(g));
+    const lb = srgbChannelToLinear(clamp(b));
+
+    const l = (0.4122214708 * lr) + (0.5363325363 * lg) + (0.0514459929 * lb);
+    const m = (0.2119034982 * lr) + (0.6806995451 * lg) + (0.1073969566 * lb);
+    const s = (0.0883024619 * lr) + (0.2817188376 * lg) + (0.6299787005 * lb);
+
+    const lRoot = Math.cbrt(l);
+    const mRoot = Math.cbrt(m);
+    const sRoot = Math.cbrt(s);
+
+    return {
+      L: (0.2104542553 * lRoot) + (0.793617785 * mRoot) - (0.0040720468 * sRoot),
+      a: (1.9779984951 * lRoot) - (2.428592205 * mRoot) + (0.4505937099 * sRoot),
+      b: (0.0259040371 * lRoot) + (0.7827717662 * mRoot) - (0.808675766 * sRoot)
+    };
+  }
+
+  function oklabToRgb(L, a, b) {
+    const lRoot = L + (0.3963377774 * a) + (0.2158037573 * b);
+    const mRoot = L - (0.1055613458 * a) - (0.0638541728 * b);
+    const sRoot = L - (0.0894841775 * a) - (1.291485548 * b);
+
+    const l = lRoot * lRoot * lRoot;
+    const m = mRoot * mRoot * mRoot;
+    const s = sRoot * sRoot * sRoot;
+
+    const lr = (4.0767416621 * l) - (3.3077115913 * m) + (0.2309699292 * s);
+    const lg = (-1.2684380046 * l) + (2.6097574011 * m) - (0.3413193965 * s);
+    const lb = (-0.0041960863 * l) - (0.7034186147 * m) + (1.707614701 * s);
+
+    return {
+      r: linearChannelToSrgb(lr),
+      g: linearChannelToSrgb(lg),
+      b: linearChannelToSrgb(lb)
+    };
+  }
+
+  function oklabToOklch(lab) {
+    const C = Math.sqrt((lab.a * lab.a) + (lab.b * lab.b));
+    let h = Math.atan2(lab.b, lab.a) * (180 / Math.PI);
+    if (h < 0) {
+      h += 360;
+    }
+    return {
+      L: lab.L,
+      C,
+      h
+    };
+  }
+
+  function oklchToOklab(L, C, h) {
+    const angle = (h * Math.PI) / 180;
+    return {
+      L,
+      a: C * Math.cos(angle),
+      b: C * Math.sin(angle)
+    };
+  }
+
+  function isRgbInSrgbGamut(rgb) {
+    return rgb.r >= 0 && rgb.r <= 1 && rgb.g >= 0 && rgb.g <= 1 && rgb.b >= 0 && rgb.b <= 1;
+  }
+
+  function oklchToClippedSrgb(L, C, h) {
+    let lab = oklchToOklab(L, C, h);
+    let rgb = oklabToRgb(lab.L, lab.a, lab.b);
+    if (isRgbInSrgbGamut(rgb)) {
+      return {
+        r: clamp(rgb.r),
+        g: clamp(rgb.g),
+        b: clamp(rgb.b)
+      };
+    }
+
+    let low = 0;
+    let high = C;
+    let best = { r: clamp(rgb.r), g: clamp(rgb.g), b: clamp(rgb.b) };
+    for (let i = 0; i < 7; i += 1) {
+      const mid = (low + high) / 2;
+      lab = oklchToOklab(L, mid, h);
+      rgb = oklabToRgb(lab.L, lab.a, lab.b);
+      if (isRgbInSrgbGamut(rgb)) {
+        low = mid;
+        best = { r: clamp(rgb.r), g: clamp(rgb.g), b: clamp(rgb.b) };
+      } else {
+        high = mid;
+      }
+    }
+
+    return best;
+  }
+
+  function hexToRgbNormalized(hex) {
+    const normalized = String(hex || "").replace(/[^0-9a-f]/gi, "");
+    if (normalized.length !== 6) {
+      return null;
+    }
+    return {
+      r: Number.parseInt(normalized.slice(0, 2), 16) / 255,
+      g: Number.parseInt(normalized.slice(2, 4), 16) / 255,
+      b: Number.parseInt(normalized.slice(4, 6), 16) / 255
+    };
+  }
+
+  function extractFirstBackgroundImageUrl(backgroundImage) {
+    const match = String(backgroundImage || "").match(/url\((['"]?)(.*?)\1\)/i);
+    return match?.[2] ? match[2] : "";
+  }
+
+  function measureFarmThemeRasterSize(node) {
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+    if (node instanceof HTMLCanvasElement) {
+      return {
+        width: Math.max(1, Math.round(node.width || node.getBoundingClientRect().width || 1)),
+        height: Math.max(1, Math.round(node.height || node.getBoundingClientRect().height || 1))
+      };
+    }
+    const rect = node.getBoundingClientRect();
+    if (rect.width < 8 || rect.height < 8) {
+      return null;
+    }
+    const dpr = clamp(window.devicePixelRatio || 1, 1, 3);
+    let width = Math.max(1, Math.round(rect.width * dpr));
+    let height = Math.max(1, Math.round(rect.height * dpr));
+    const pixels = width * height;
+    if (pixels > FARM_THEME_MAX_RASTER_PIXELS) {
+      const scale = Math.sqrt(FARM_THEME_MAX_RASTER_PIXELS / pixels);
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+    }
+    return { width, height };
+  }
+
+  function rememberFarmThemeOriginals(node, descriptor) {
+    if (!(node instanceof HTMLElement) || !descriptor?.kind) {
+      return;
+    }
+    if (descriptor.kind === "image" && node instanceof HTMLImageElement) {
+      if (node.dataset.muFarmOriginalSource == null) {
+        node.dataset.muFarmOriginalSource = descriptor.source;
+      }
+      if (node.dataset.muFarmOriginalSrc == null) {
+        node.dataset.muFarmOriginalSrc = node.getAttribute("src") || "";
+      }
+      if (node.dataset.muFarmOriginalSrcset == null) {
+        node.dataset.muFarmOriginalSrcset = node.getAttribute("srcset") || "";
+      }
+      return;
+    }
+    if (descriptor.kind === "background") {
+      if (node.dataset.muFarmOriginalSource == null) {
+        node.dataset.muFarmOriginalSource = descriptor.source;
+      }
+      if (node.dataset.muFarmOriginalInlineBackgroundImage == null) {
+        node.dataset.muFarmOriginalInlineBackgroundImage = node.style.backgroundImage || "";
+      }
+      return;
+    }
+    if (descriptor.kind === "canvas" && node instanceof HTMLCanvasElement) {
+      const context = node.getContext("2d", { willReadFrequently: true });
+      if (!context || farmThemeCanvasOriginals.has(node)) {
+        return;
+      }
+      try {
+        const snapshot = context.getImageData(0, 0, node.width, node.height);
+        farmThemeCanvasOriginals.set(node, snapshot);
+      } catch (_err) {}
+    }
+  }
+
+  function restoreFarmThemeVisual(node) {
+    if (!(node instanceof HTMLElement)) {
+      return;
+    }
+    if (node.dataset.muFarmThemeManaged === "image" && node instanceof HTMLImageElement) {
+      const originalSrcset = node.dataset.muFarmOriginalSrcset || "";
+      const originalSrc = node.dataset.muFarmOriginalSrc || node.dataset.muFarmOriginalSource || "";
+      if (originalSrcset) {
+        node.setAttribute("srcset", originalSrcset);
+      } else {
+        node.removeAttribute("srcset");
+      }
+      if (originalSrc) {
+        node.setAttribute("src", originalSrc);
+      }
+    } else if (node.dataset.muFarmThemeManaged === "background") {
+      node.style.backgroundImage = node.dataset.muFarmOriginalInlineBackgroundImage || "";
+    } else if (node.dataset.muFarmThemeManaged === "canvas" && node instanceof HTMLCanvasElement) {
+      const context = node.getContext("2d", { willReadFrequently: true });
+      const snapshot = farmThemeCanvasOriginals.get(node);
+      if (context && snapshot) {
+        try {
+          context.putImageData(snapshot, 0, 0);
+        } catch (_err) {}
+      }
+      farmThemeCanvasOriginals.delete(node);
+    }
+    delete node.dataset.muFarmThemeManaged;
+    delete node.dataset.muFarmThemeKey;
+    delete node.dataset.muFarmRecolored;
+    delete node.dataset.muFarmOriginalSource;
+    delete node.dataset.muFarmOriginalSrc;
+    delete node.dataset.muFarmOriginalSrcset;
+    delete node.dataset.muFarmOriginalInlineBackgroundImage;
+  }
+
+  function resolveFarmThemeVisualDescriptor(node) {
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+
+    const size = measureFarmThemeRasterSize(node);
+    if (!size) {
+      return null;
+    }
+
+    if (node instanceof HTMLImageElement) {
+      const source = node.dataset.muFarmThemeManaged
+        ? (node.dataset.muFarmOriginalSource || node.currentSrc || node.src || "")
+        : (node.currentSrc || node.src || "");
+      if (source) {
+        return { kind: "image", source, width: size.width, height: size.height, role: String(node.dataset.muFarmVisual || "") };
+      }
+    }
+
+    if (node instanceof HTMLCanvasElement) {
+      return {
+        kind: "canvas",
+        node,
+        source: `${describeElementForDebug(node)}:${node.width}x${node.height}`,
+        width: Math.max(1, Math.round(node.width || size.width)),
+        height: Math.max(1, Math.round(node.height || size.height)),
+        role: String(node.dataset.muFarmVisual || "")
+      };
+    }
+
+    const backgroundImage = node.dataset.muFarmThemeManaged
+      ? (node.dataset.muFarmOriginalSource || extractFirstBackgroundImageUrl(window.getComputedStyle(node).backgroundImage))
+      : extractFirstBackgroundImageUrl(window.getComputedStyle(node).backgroundImage);
+    if (backgroundImage && !backgroundImage.startsWith("data:")) {
+      return { kind: "background", source: backgroundImage, width: size.width, height: size.height, role: String(node.dataset.muFarmVisual || "") };
+    }
+
+    return null;
+  }
+
+  function getFarmThemeSourcePathname(source) {
+    try {
+      return new URL(String(source || ""), window.location.origin).pathname.toLowerCase();
+    } catch (_err) {
+      return "";
+    }
+  }
+
+  function getHardcodedCatpuccinAssetUrl(descriptor) {
+    if (!isCatpuccinThemeActive() || !chrome?.runtime?.getURL) {
+      return "";
+    }
+    const pathname = getFarmThemeSourcePathname(descriptor?.source);
+    const pathMapped = pathname ? CATPUCCIN_HARDCODED_ASSET_PATH_MAP[pathname] : "";
+    if (pathMapped) {
+      return chrome.runtime.getURL(pathMapped);
+    }
+    return "";
+  }
+
+  function loadImageForFarmTheme(source) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      image.decoding = "async";
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`Failed to load farm visual: ${source}`));
+      image.src = source;
+    });
+  }
+
+  async function applyCatpuccinRecolorToFarmVisual(node, token) {
+    if (!(node instanceof HTMLElement) || token !== farmThemeRefreshToken || !isCatpuccinThemeActive()) {
+      return;
+    }
+
+    const descriptor = resolveFarmThemeVisualDescriptor(node);
+    if (!descriptor) {
+      restoreFarmThemeVisual(node);
+      return;
+    }
+
+    const hardcodedAssetUrl = getHardcodedCatpuccinAssetUrl(descriptor);
+    if (hardcodedAssetUrl) {
+      const hardcodedKey = `hardcoded:${hardcodedAssetUrl}`;
+      if (node.dataset.muFarmThemeKey === hardcodedKey && node.dataset.muFarmRecolored === "true") {
+        return;
+      }
+      rememberFarmThemeOriginals(node, descriptor);
+      if (descriptor.kind === "image" && node instanceof HTMLImageElement) {
+        node.removeAttribute("srcset");
+        node.src = hardcodedAssetUrl;
+        node.dataset.muFarmThemeManaged = "image";
+      } else if (descriptor.kind === "background") {
+        node.style.backgroundImage = `url("${hardcodedAssetUrl}")`;
+        node.dataset.muFarmThemeManaged = "background";
+      } else if (descriptor.kind === "canvas" && node instanceof HTMLCanvasElement) {
+        const context = node.getContext("2d", { willReadFrequently: true });
+        if (!context) {
+          return;
+        }
+        try {
+          const image = await loadImageForFarmTheme(hardcodedAssetUrl);
+          if (token !== farmThemeRefreshToken || !isCatpuccinThemeActive()) {
+            return;
+          }
+          context.clearRect(0, 0, descriptor.width, descriptor.height);
+          context.drawImage(image, 0, 0, descriptor.width, descriptor.height);
+          node.dataset.muFarmThemeManaged = "canvas";
+        } catch (_err) {
+          return;
+        }
+      }
+      node.dataset.muFarmRecolored = "true";
+      node.dataset.muFarmThemeKey = hardcodedKey;
+      return;
+    }
+
+    restoreFarmThemeVisual(node);
+  }
+
+  function syncFarmThemeVisualRefresh() {
+    const targets = Array.from(document.querySelectorAll("[data-mu-farm-visual]"))
+      .filter((node) => node instanceof HTMLElement);
+    const targetSet = new Set(targets);
+
+    Array.from(document.querySelectorAll("[data-mu-farm-theme-managed]")).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      if (!isCatpuccinThemeActive() || !targetSet.has(node)) {
+        restoreFarmThemeVisual(node);
+      }
+    });
+
+    if (!isCatpuccinThemeActive()) {
+      return;
+    }
+
+    const token = farmThemeRefreshToken;
+    targets.forEach((node) => {
+      applyCatpuccinRecolorToFarmVisual(node, token).catch(() => {});
+    });
+  }
+
+  function queueFarmThemeVisualRefresh() {
+    farmThemeRefreshToken += 1;
+    if (farmThemeRefreshQueued) {
+      return;
+    }
+    farmThemeRefreshQueued = true;
+    requestAnimationFrame(() => {
+      farmThemeRefreshQueued = false;
+      syncFarmThemeVisualRefresh();
+    });
   }
 
 
@@ -1079,6 +1814,7 @@
     if (!(button instanceof HTMLElement)) {
       return;
     }
+    const palette = getStreakThemePalette();
     const minutes = Math.max(0, Math.round(Number(data?.todayMinutes) || 0));
     const ratio = Math.max(0, Math.min(1, minutes / 60));
     const progressText = data?.todayLockedIn ? "locked in" : `${Math.min(minutes, 60)}/60m`;
@@ -1101,23 +1837,27 @@
     const bar = progress.querySelector(".mu-streak-progress-bar");
     const label = progress.querySelector(".mu-streak-progress-label");
     if (bar instanceof HTMLElement) {
+      const pct = Math.max(0, Math.min(100, ratio * 100));
       bar.style.width = "56px";
       bar.style.height = "6px";
-      bar.style.border = "1px solid rgba(104,77,58,0.28)";
-      bar.style.background = `linear-gradient(90deg, #ea580c ${ratio * 100}%, rgba(104,77,58,0.12) ${ratio * 100}%)`;
+      bar.style.setProperty("border", `1px solid ${palette.progressBorder}`, "important");
+      bar.style.setProperty("background-color", palette.progressTrack, "important");
+      bar.style.setProperty("background-image", `linear-gradient(90deg, ${palette.progressFill} 0 ${pct}%, ${palette.progressTrack} ${pct}% 100%)`, "important");
+      bar.style.backgroundRepeat = "no-repeat";
+      bar.style.backgroundSize = "100% 100%";
     }
     if (label instanceof HTMLElement) {
       label.textContent = progressText;
       label.style.fontSize = "10px";
       label.style.lineHeight = "1";
       label.style.fontWeight = "800";
-      label.style.color = "rgba(104,77,58,0.72)";
+      label.style.color = palette.muted;
       label.style.textTransform = "uppercase";
       label.style.letterSpacing = "0.04em";
     }
   }
 
-  function buildRecentActivitySparkline(recentDays) {
+  function buildRecentActivitySparkline(recentDays, palette = getStreakThemePalette()) {
     const days = Array.isArray(recentDays) ? recentDays : [];
     if (!days.length) {
       return "";
@@ -1181,51 +1921,51 @@
     const circles = points.map((point) => {
       const status = String(point.day?.status || "pending");
       const fill = status === "active"
-        ? "#f97316"
+        ? palette.active
         : status === "frozen"
-          ? "#22d3ee"
+          ? palette.frozen
           : status === "review_protected" || status === "review"
-            ? "#7dd3fc"
+            ? palette.review
             : status === "partial"
-              ? "#fde047"
-              : "#cbd5e1";
+              ? palette.partial
+              : palette.inactive;
       const stroke = status === "active"
-        ? "#c2410c"
+        ? palette.activeStroke
         : status === "frozen"
-          ? "#0e7490"
+          ? palette.frozenStroke
           : status === "review_protected" || status === "review"
-            ? "#0369a1"
+            ? palette.reviewStroke
             : status === "partial"
-              ? "#ca8a04"
-              : "#94a3b8";
+              ? palette.partialStroke
+              : palette.inactiveStroke;
       return `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" fill="${fill}" stroke="${stroke}" stroke-width="1.5"><title>${escapeHtml(`${point.day.date}: ${point.minutes} min`)}</title></circle>`;
     }).join("");
 
     return `
       <svg viewBox="0 0 ${width} ${height}" width="100%" height="96" role="img" aria-label="Recent activity line chart">
-        <line x1="${axisLeft}" y1="${top}" x2="${axisLeft}" y2="${bottom}" stroke="rgba(104,77,58,0.28)" stroke-width="1.2"></line>
-        <line x1="${axisLeft}" y1="${bottom}" x2="${width - axisRight}" y2="${bottom}" stroke="rgba(104,77,58,0.28)" stroke-width="1.2"></line>
-        <line x1="${axisLeft - 4}" y1="${top}" x2="${axisLeft}" y2="${top}" stroke="rgba(104,77,58,0.28)" stroke-width="1"></line>
-        <line x1="${axisLeft - 4}" y1="${((top + bottom) / 2).toFixed(1)}" x2="${axisLeft}" y2="${((top + bottom) / 2).toFixed(1)}" stroke="rgba(104,77,58,0.22)" stroke-width="1"></line>
-        <line x1="${axisLeft - 4}" y1="${bottom}" x2="${axisLeft}" y2="${bottom}" stroke="rgba(104,77,58,0.28)" stroke-width="1"></line>
+        <line x1="${axisLeft}" y1="${top}" x2="${axisLeft}" y2="${bottom}" stroke="${palette.chartAxis}" stroke-width="1.2"></line>
+        <line x1="${axisLeft}" y1="${bottom}" x2="${width - axisRight}" y2="${bottom}" stroke="${palette.chartAxis}" stroke-width="1.2"></line>
+        <line x1="${axisLeft - 4}" y1="${top}" x2="${axisLeft}" y2="${top}" stroke="${palette.chartAxis}" stroke-width="1"></line>
+        <line x1="${axisLeft - 4}" y1="${((top + bottom) / 2).toFixed(1)}" x2="${axisLeft}" y2="${((top + bottom) / 2).toFixed(1)}" stroke="${palette.chartAxis}" stroke-width="1"></line>
+        <line x1="${axisLeft - 4}" y1="${bottom}" x2="${axisLeft}" y2="${bottom}" stroke="${palette.chartAxis}" stroke-width="1"></line>
         ${axisTickIndexes.map((index, tickIndex) => {
           const point = points[index];
-          const opacity = tickIndex === 0 || tickIndex === axisTickIndexes.length - 1 ? 0.28 : 0.22;
-          return `<line x1="${point.x.toFixed(1)}" y1="${bottom}" x2="${point.x.toFixed(1)}" y2="${bottom + 4}" stroke="rgba(104,77,58,${opacity})" stroke-width="1"></line>`;
+          const stroke = tickIndex === 0 || tickIndex === axisTickIndexes.length - 1 ? palette.chartAxis : palette.rule;
+          return `<line x1="${point.x.toFixed(1)}" y1="${bottom}" x2="${point.x.toFixed(1)}" y2="${bottom + 4}" stroke="${stroke}" stroke-width="1"></line>`;
         }).join("")}
-        <text x="${axisLeft - 6}" y="${top + 3}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.58)">${escapeHtml(maxLabel)}</text>
-        <text x="${axisLeft - 6}" y="${((top + bottom) / 2) + 3}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.42)">${escapeHtml(midLabel)}</text>
-        <text x="${axisLeft - 6}" y="${bottom + 3}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.42)">${escapeHtml(zeroLabel)}</text>
-        <line x1="${axisLeft}" y1="${targetY.toFixed(1)}" x2="${width - axisRight}" y2="${targetY.toFixed(1)}" stroke="#b08f74" stroke-width="1.5" stroke-dasharray="4 4"></line>
-        <polyline points="${linePoints}" fill="none" stroke="#684d3a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline>
+        <text x="${axisLeft - 6}" y="${top + 3}" text-anchor="end" font-size="10" font-weight="800" fill="${palette.chartAxisStrong}">${escapeHtml(maxLabel)}</text>
+        <text x="${axisLeft - 6}" y="${((top + bottom) / 2) + 3}" text-anchor="end" font-size="10" font-weight="800" fill="${palette.muted}">${escapeHtml(midLabel)}</text>
+        <text x="${axisLeft - 6}" y="${bottom + 3}" text-anchor="end" font-size="10" font-weight="800" fill="${palette.muted}">${escapeHtml(zeroLabel)}</text>
+        <line x1="${axisLeft}" y1="${targetY.toFixed(1)}" x2="${width - axisRight}" y2="${targetY.toFixed(1)}" stroke="${palette.chartTarget}" stroke-width="1.5" stroke-dasharray="4 4"></line>
+        <polyline points="${linePoints}" fill="none" stroke="${palette.chartLine}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></polyline>
         ${circles}
         ${axisTickIndexes.map((index, tickIndex) => {
           const point = points[index];
           const anchor = tickIndex === 0 ? "start" : tickIndex === axisTickIndexes.length - 1 ? "end" : "middle";
-          const opacity = tickIndex === 0 || tickIndex === axisTickIndexes.length - 1 ? 0.62 : 0.5;
-          return `<text x="${point.x.toFixed(1)}" y="${height - 8}" text-anchor="${anchor}" font-size="10" font-weight="800" fill="rgba(104,77,58,${opacity})">${escapeHtml(formatAxisDateLabel(point.day?.date))}</text>`;
+          const fill = tickIndex === 0 || tickIndex === axisTickIndexes.length - 1 ? palette.subtext : palette.muted;
+          return `<text x="${point.x.toFixed(1)}" y="${height - 8}" text-anchor="${anchor}" font-size="10" font-weight="800" fill="${fill}">${escapeHtml(formatAxisDateLabel(point.day?.date))}</text>`;
         }).join("")}
-        <text x="${width - axisRight}" y="${Math.max(10, targetY - 4).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="rgba(104,77,58,0.58)">60m target</text>
+        <text x="${width - axisRight}" y="${Math.max(10, targetY - 4).toFixed(1)}" text-anchor="end" font-size="10" font-weight="800" fill="${palette.chartAxisStrong}">60m target</text>
       </svg>
     `;
   }
@@ -1244,11 +1984,7 @@
       card.id = STREAK_HOVER_CARD_ID;
       card.style.minWidth = "280px";
       card.style.maxWidth = "360px";
-      card.style.background = "#f6ead2";
-      card.style.border = "3px solid #5c3b20";
-      card.style.boxShadow = "0 16px 36px rgba(74, 48, 24, 0.22)";
       card.style.borderRadius = "2px";
-      card.style.color = "#5c3b20";
       card.style.pointerEvents = "auto";
       card.hidden = true;
       document.body.appendChild(card);
@@ -1260,6 +1996,11 @@
       });
       card.addEventListener("mouseleave", () => hideStreakHoverCard());
     }
+    const palette = getStreakThemePalette();
+    card.style.background = palette.cardBg;
+    card.style.border = `3px solid ${palette.cardBorder}`;
+    card.style.boxShadow = palette.cardShadow;
+    card.style.color = palette.text;
     return card;
   }
 
@@ -1284,6 +2025,7 @@
 
   function renderStreakHoverCard(data) {
     const card = ensureStreakHoverCard();
+    const palette = getStreakThemePalette();
     const items = Array.isArray(data?.projects) ? data.projects : [];
     const streakFreezesRemaining = Math.max(0, Math.round(Number(data?.streakFreezesRemaining) || 0));
     const recentDays = Array.isArray(data?.calendarDays)
@@ -1293,53 +2035,53 @@
       ? Math.round(recentDays.reduce((sum, day) => sum + (Number(day?.minutes) || 0), 0) / recentDays.length)
       : 0;
     const todayMinutes = Math.max(0, Math.round(Number(data?.todayMinutes) || 0));
-    const sparkline = buildRecentActivitySparkline(recentDays);
-    const flameIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;flex-shrink:0;color:#ea580c;" aria-hidden="true"><path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"></path></svg>`;
-    const freezeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;flex-shrink:0;color:#164e63;" aria-hidden="true"><path d="m10 20-1.25-2.5L6 18"></path><path d="M10 4 8.75 6.5 6 6"></path><path d="m14 20 1.25-2.5L18 18"></path><path d="m14 4 1.25 2.5L18 6"></path><path d="m17 21-3-6h-4"></path><path d="m17 3-3 6 1.5 3"></path><path d="M2 12h6.5L10 9"></path><path d="m20 10-1.5 2 1.5 2"></path><path d="M22 12h-6.5L14 15"></path><path d="m4 10 1.5 2L4 14"></path><path d="m7 21 3-6-1.5-3"></path><path d="m7 3 3 6h4"></path></svg>`;
+    const sparkline = buildRecentActivitySparkline(recentDays, palette);
+    const flameIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;flex-shrink:0;color:${palette.active};" aria-hidden="true"><path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"></path></svg>`;
+    const freezeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;flex-shrink:0;color:${palette.freezeText};" aria-hidden="true"><path d="m10 20-1.25-2.5L6 18"></path><path d="M10 4 8.75 6.5 6 6"></path><path d="m14 20 1.25-2.5L18 18"></path><path d="m14 4 1.25 2.5L18 6"></path><path d="m17 21-3-6h-4"></path><path d="m17 3-3 6 1.5 3"></path><path d="M2 12h6.5L10 9"></path><path d="m20 10-1.5 2 1.5 2"></path><path d="M22 12h-6.5L14 15"></path><path d="m4 10 1.5 2L4 14"></path><path d="m7 21 3-6-1.5-3"></path><path d="m7 3 3 6h4"></path></svg>`;
     card.innerHTML = items.length || streakFreezesRemaining > 0
       ? `
         <div style="padding:16px 16px 14px; display:flex; flex-direction:column; gap:14px;">
-          <div style="padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,1);">
-            <div style="font-size:12px; line-height:1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.08em; color:rgba(104,77,58,0.95);">Project streaks</div>
+          <div style="padding-bottom:12px; border-bottom:2px solid ${palette.cardBorder};">
+            <div style="font-size:12px; line-height:1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.08em; color:${palette.text};">Project streaks</div>
           </div>
-          <div style="display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,0.15);">
-            <div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:rgb(236 254 255); border:2px solid rgba(14,116,144,0.4); color:rgb(22 78 99);">
+          <div style="display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; padding-bottom:12px; border-bottom:2px solid ${palette.rule};">
+            <div style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:${palette.freezeBg}; border:2px solid ${palette.freezeBorder}; color:${palette.freezeText};">
               ${freezeIcon}
               <span style="font-size:22px; line-height:1; font-weight:900;">${streakFreezesRemaining}</span>
               <span style="font-size:13px; line-height:1rem; font-weight:700;">streak freezes</span>
             </div>
             <div style="display:flex; align-items:stretch; gap:8px; flex:1 1 220px; min-width:220px;">
-              <div style="flex:1 1 0; padding:8px 10px; border:2px solid rgba(104,77,58,0.15); background:rgba(104,77,58,0.05);">
-                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(104,77,58,0.6); font-weight:800;">Avg daily</div>
-                <div style="margin-top:4px; font-size:18px; line-height:1; font-weight:900; color:#684d3a;">${formatHours(averageRecentMinutes / 60)}</div>
+              <div style="flex:1 1 0; padding:8px 10px; border:2px solid ${palette.panelBorder}; background:${palette.panelBg};">
+                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:${palette.muted}; font-weight:800;">Avg daily</div>
+                <div style="margin-top:4px; font-size:18px; line-height:1; font-weight:900; color:${palette.text};">${formatHours(averageRecentMinutes / 60)}</div>
               </div>
-              <div style="flex:1 1 0; padding:8px 10px; border:2px solid rgba(104,77,58,0.15); background:rgba(104,77,58,0.05);">
-                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:rgba(104,77,58,0.6); font-weight:800;">Today</div>
-                <div style="margin-top:4px; font-size:18px; line-height:1; font-weight:900; color:#684d3a;">${formatHours(todayMinutes / 60)}</div>
+              <div style="flex:1 1 0; padding:8px 10px; border:2px solid ${palette.panelBorder}; background:${palette.panelBg};">
+                <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:${palette.muted}; font-weight:800;">Today</div>
+                <div style="margin-top:4px; font-size:18px; line-height:1; font-weight:900; color:${palette.text};">${formatHours(todayMinutes / 60)}</div>
               </div>
             </div>
           </div>
           ${sparkline ? `
-            <div style="display:flex; flex-direction:column; gap:8px; padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,0.15);">
+            <div style="display:flex; flex-direction:column; gap:8px; padding-bottom:12px; border-bottom:2px solid ${palette.rule};">
               <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-                <div style="font-size:11px; line-height:1rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:rgba(104,77,58,0.7);">Recent activity</div>
-                <div style="font-size:10px; line-height:1rem; color:rgba(104,77,58,0.55); font-weight:700;">last 14 days</div>
+                <div style="font-size:11px; line-height:1rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:${palette.subtext};">Recent activity</div>
+                <div style="font-size:10px; line-height:1rem; color:${palette.muted}; font-weight:700;">last 14 days</div>
               </div>
               <div style="padding:2px 0 0;">${sparkline}</div>
-              <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:10px; color:rgba(104,77,58,0.6); font-weight:700;">
-                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:#f97316; border:1px solid #c2410c;"></span>Active</span>
-                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:#22d3ee; border:1px solid #0e7490;"></span>Frozen</span>
-                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:rgba(253,224,71,0.6); border:1px solid rgba(202,138,4,0.5);"></span>Below target</span>
+              <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:10px; color:${palette.muted}; font-weight:700;">
+                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:${palette.active}; border:1px solid ${palette.activeStroke};"></span>Active</span>
+                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:${palette.frozen}; border:1px solid ${palette.frozenStroke};"></span>Frozen</span>
+                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:${palette.partial}; border:1px solid ${palette.partialStroke};"></span>Below target</span>
               </div>
             </div>
           ` : ""}
           <div style="display:flex; flex-direction:column; gap:6px;">
           ${items.map((item) => `
-            <div style="display:flex; align-items:center; gap:12px; padding:8px 12px; background:rgba(104,77,58,0.05); border:2px solid rgba(104,77,58,0.2);">
+            <div style="display:flex; align-items:center; gap:12px; padding:8px 12px; background:${palette.panelBg}; border:2px solid ${palette.panelBorder};">
               ${flameIcon}
-              <span style="flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; line-height:1.25; font-weight:700; color:rgb(104 77 58);">${escapeHtml(item.title)}</span>
-              <span style="flex-shrink:0; font-size:24px; line-height:1; font-weight:900; color:rgb(104 77 58);">${Math.max(0, Math.round(Number(item.streakDays) || 0))}</span>
-              <span style="flex-shrink:0; font-size:12px; line-height:1rem; color:rgba(104,77,58,0.6);">days</span>
+              <span style="flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; line-height:1.25; font-weight:700; color:${palette.text};">${escapeHtml(item.title)}</span>
+              <span style="flex-shrink:0; font-size:24px; line-height:1; font-weight:900; color:${palette.text};">${Math.max(0, Math.round(Number(item.streakDays) || 0))}</span>
+              <span style="flex-shrink:0; font-size:12px; line-height:1rem; color:${palette.muted};">days</span>
             </div>
           `).join("")}
           </div>
@@ -1347,8 +2089,8 @@
       `
       : `
         <div style="padding:16px; display:flex; flex-direction:column; gap:10px;">
-          <div style="padding-bottom:12px; border-bottom:2px solid rgba(104,77,58,1); font-size:12px; line-height:1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.08em; color:rgba(104,77,58,0.95);">Project streaks</div>
-          <div style="font-size:13px; color:rgba(104,77,58,0.8);">No streak data found.</div>
+          <div style="padding-bottom:12px; border-bottom:2px solid ${palette.cardBorder}; font-size:12px; line-height:1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.08em; color:${palette.text};">Project streaks</div>
+          <div style="font-size:13px; color:${palette.subtext};">No streak data found.</div>
         </div>
       `;
     return card;
@@ -1563,7 +2305,8 @@
         showHudGoalsStat: true,
         showHudProgressStat: true,
         showHudRemainingStat: true,
-        showHudEtaStat: true
+        showHudEtaStat: true,
+        theme: "default"
       };
     }
     try {
@@ -1578,7 +2321,8 @@
         showHudGoalsStat: parsed?.showHudGoalsStat !== false,
         showHudProgressStat: parsed?.showHudProgressStat !== false,
         showHudRemainingStat: parsed?.showHudRemainingStat !== false,
-        showHudEtaStat: parsed?.showHudEtaStat !== false
+        showHudEtaStat: parsed?.showHudEtaStat !== false,
+        theme: normalizeTheme(parsed?.theme)
       };
     } catch (_err) {
       return {
@@ -1591,7 +2335,8 @@
         showHudGoalsStat: true,
         showHudProgressStat: true,
         showHudRemainingStat: true,
-        showHudEtaStat: true
+        showHudEtaStat: true,
+        theme: "default"
       };
     }
   }
@@ -1608,7 +2353,8 @@
       showHudGoalsStat: prefs.showHudGoalsStat !== false,
       showHudProgressStat: prefs.showHudProgressStat !== false,
       showHudRemainingStat: prefs.showHudRemainingStat !== false,
-      showHudEtaStat: prefs.showHudEtaStat !== false
+      showHudEtaStat: prefs.showHudEtaStat !== false,
+      theme: normalizeTheme(prefs.theme)
     }));
   }
 
@@ -2189,6 +2935,8 @@
       return null;
     }
 
+    syncFarmThemeTargets();
+
     let layer = document.getElementById(PROJECT_LABEL_LAYER_ID);
     if (!layer) {
       layer = document.createElement("div");
@@ -2433,6 +3181,8 @@
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHours' checked /> <span>Show time</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showStreak' checked /> <span>Show streak</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showEstCoins' checked /> <span>Show est coins</span></label>",
+        "<div class='mu-label-settings-heading'>Theme</div>",
+        "<label class='mu-label-settings-row mu-theme-select-row'><span>Preset</span> <select data-theme-key='theme' class='mu-theme-select'><option value='default'>Default</option><option value='dark'>Dark Mode</option></select></label>",
         "<div class='mu-goals-settings'>",
         "<div class='mu-label-settings-heading'>Dashboard</div>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showGoalsHud' checked /> <span>Show HUD in dashboard</span></label>",
@@ -2473,6 +3223,24 @@
         if (key === "showGoalsHud") {
           queueGoalsMiniRender();
         }
+      });
+
+      panel.addEventListener("change", (event) => {
+        const select = event.target instanceof HTMLSelectElement ? event.target : null;
+        const key = select?.dataset?.themeKey;
+        if (!(select instanceof HTMLSelectElement) || key !== "theme") {
+          return;
+        }
+        const nextTheme = normalizeTheme(select.value);
+        if (normalizeTheme(projectLabelPrefs.theme) === nextTheme) {
+          return;
+        }
+        projectLabelPrefs = {
+          ...projectLabelPrefs,
+          theme: nextTheme
+        };
+        writeProjectLabelPrefsCache(projectLabelPrefs);
+        applySelectedTheme();
       });
 
       panel.addEventListener("click", (event) => {
@@ -2567,6 +3335,10 @@
         }
         input.checked = projectLabelPrefs[key] !== false;
       });
+    const themeSelect = panel.querySelector("select[data-theme-key='theme']");
+    if (themeSelect instanceof HTMLSelectElement) {
+      themeSelect.value = normalizeTheme(projectLabelPrefs.theme);
+    }
 
     if (!panel.hidden) {
       const button = root.querySelector(".mu-label-settings-btn");
@@ -4993,6 +5765,7 @@
   projectTitleById = {};
   projectMetaById = {};
   projectLabelPrefs = readProjectLabelPrefsCache();
+  applySelectedTheme();
   goalsViewMode = projectLabelPrefs.goalsViewMode === "projected" ? "projected" : "actual";
   goalsProgressMode = normalizeGoalsProgressMode(projectLabelPrefs.goalsProgressMode);
   projectGoals = readGoalsCache();

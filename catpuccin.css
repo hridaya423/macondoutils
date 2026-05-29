@@ -1,0 +1,353 @@
+:root.mu-theme-catpuccin {
+  --mu-theme-base: #1e1e2e;
+  --mu-theme-mantle: #181825;
+  --mu-theme-crust: #11111b;
+  --mu-theme-surface-0: #313244;
+  --mu-theme-surface-1: #45475a;
+  --mu-theme-surface-2: #585b70;
+  --mu-theme-overlay-0: #6c7086;
+  --mu-theme-overlay-1: #7f849c;
+  --mu-theme-overlay-2: #9399b2;
+  --mu-theme-surface: #313244;
+  --mu-theme-text: #cdd6f4;
+  --mu-theme-subtext: #bac2de;
+  --mu-theme-subtext-1: #a6adc8;
+  --mu-theme-blue: #89b4fa;
+  --mu-theme-mauve: #cba6f7;
+  --mu-theme-peach: #fab387;
+  --mu-theme-green: #a6e3a1;
+  --mu-theme-red: #f38ba8;
+  --mu-theme-lavender: #b4befe;
+  --mu-theme-yellow: #f9e2af;
+  --mu-theme-rosewater: #f5e0dc;
+}
+
+:root.mu-theme-catpuccin body,
+:root.mu-theme-catpuccin .bg-parchment,
+:root.mu-theme-catpuccin .bg-parchment\/90,
+:root.mu-theme-catpuccin [class*="bg-parchment"] {
+  background-color: var(--mu-theme-base) !important;
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin [class*="bg-ds-cream"],
+:root.mu-theme-catpuccin [class*="bg-ds-beige"],
+:root.mu-theme-catpuccin [class*="bg-ds-tan"],
+:root.mu-theme-catpuccin [class*="bg-ds-brown"],
+:root.mu-theme-catpuccin [class*="bg-ds-gold"] {
+  background-color: var(--mu-theme-mantle) !important;
+}
+
+:root.mu-theme-catpuccin [data-mu-farm-visual="primary"] {
+  filter: saturate(0.8) brightness(0.9) contrast(1.03) hue-rotate(18deg) !important;
+}
+
+:root.mu-theme-catpuccin [data-mu-farm-visual="secondary"] {
+  filter: saturate(0.86) brightness(0.94) contrast(1.02) hue-rotate(12deg) !important;
+}
+
+:root.mu-theme-catpuccin [data-mu-farm-recolored="true"] {
+  filter: none !important;
+}
+
+:root.mu-theme-catpuccin [class*="text-ds-brown"],
+:root.mu-theme-catpuccin [class*="text-ds-gold"],
+:root.mu-theme-catpuccin [class*="text-ds-red"],
+:root.mu-theme-catpuccin [class*="text-ds-green"],
+:root.mu-theme-catpuccin [class*="text-ds-cream"] {
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin [class*="border-ds-brown"],
+:root.mu-theme-catpuccin [class*="border-ds-gold"],
+:root.mu-theme-catpuccin [class*="border-ds-cream"] {
+  border-color: var(--mu-theme-lavender) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame,
+:root.mu-theme-catpuccin .modal-frame .bg-parchment,
+:root.mu-theme-catpuccin .modal-frame [class*="rounded"],
+:root.mu-theme-catpuccin .modal-frame [class*="shadow"] {
+  background-color: var(--mu-theme-base) !important;
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame,
+:root.mu-theme-catpuccin .modal-frame > div,
+:root.mu-theme-catpuccin .modal-frame section,
+:root.mu-theme-catpuccin .modal-frame article,
+:root.mu-theme-catpuccin .modal-frame [class*="panel"],
+:root.mu-theme-catpuccin .modal-frame [class*="card"],
+:root.mu-theme-catpuccin .modal-frame [class*="container"],
+:root.mu-theme-catpuccin .modal-frame [class*="stat"],
+:root.mu-theme-catpuccin .modal-frame [class*="row"],
+:root.mu-theme-catpuccin .modal-frame [class*="item"] {
+  background-image: none !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame [style*="background"],
+:root.mu-theme-catpuccin .modal-frame [style*="border"] {
+  background-color: var(--mu-theme-base) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame > div,
+:root.mu-theme-catpuccin .modal-frame section,
+:root.mu-theme-catpuccin .modal-frame article,
+:root.mu-theme-catpuccin .modal-frame [class*="panel"],
+:root.mu-theme-catpuccin .modal-frame [class*="card"],
+:root.mu-theme-catpuccin .modal-frame [class*="container"],
+:root.mu-theme-catpuccin .modal-frame [class*="stat"],
+:root.mu-theme-catpuccin .modal-frame [class*="row"],
+:root.mu-theme-catpuccin .modal-frame [class*="item"] {
+  background-color: color-mix(in srgb, var(--mu-theme-surface-0) 82%, transparent) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame h1,
+:root.mu-theme-catpuccin .modal-frame h2,
+:root.mu-theme-catpuccin .modal-frame h3,
+:root.mu-theme-catpuccin .modal-frame h4,
+:root.mu-theme-catpuccin .modal-frame strong,
+:root.mu-theme-catpuccin .modal-frame b {
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame p,
+:root.mu-theme-catpuccin .modal-frame span,
+:root.mu-theme-catpuccin .modal-frame label,
+:root.mu-theme-catpuccin .modal-frame small,
+:root.mu-theme-catpuccin .modal-frame [class*="muted"] {
+  color: var(--mu-theme-subtext) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame hr,
+:root.mu-theme-catpuccin .modal-frame [class*="divider"],
+:root.mu-theme-catpuccin .modal-frame [class*="separator"] {
+  border-color: var(--mu-theme-overlay-0) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame svg text {
+  fill: var(--mu-theme-subtext-1) !important;
+}
+
+:root.mu-theme-catpuccin .modal-frame svg path,
+:root.mu-theme-catpuccin .modal-frame svg line,
+:root.mu-theme-catpuccin .modal-frame svg circle,
+:root.mu-theme-catpuccin .modal-frame svg rect,
+:root.mu-theme-catpuccin .modal-frame canvas {
+  color: var(--mu-theme-subtext-1) !important;
+}
+
+:root.mu-theme-catpuccin button,
+:root.mu-theme-catpuccin select,
+:root.mu-theme-catpuccin input,
+:root.mu-theme-catpuccin textarea,
+:root.mu-theme-catpuccin .custom-select {
+  background: var(--mu-theme-mantle) !important;
+  color: var(--mu-theme-text) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+}
+
+:root.mu-theme-catpuccin button:hover,
+:root.mu-theme-catpuccin select:hover,
+:root.mu-theme-catpuccin input:hover,
+:root.mu-theme-catpuccin textarea:hover,
+:root.mu-theme-catpuccin .custom-select:hover {
+  border-color: var(--mu-theme-blue) !important;
+}
+
+:root.mu-theme-catpuccin input:focus,
+:root.mu-theme-catpuccin textarea:focus,
+:root.mu-theme-catpuccin select:focus {
+  outline-color: color-mix(in srgb, var(--mu-theme-blue) 70%, transparent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mu-theme-blue) 30%, transparent) !important;
+}
+
+:root.mu-theme-catpuccin input[type="checkbox"],
+:root.mu-theme-catpuccin input[type="radio"] {
+  accent-color: var(--mu-theme-blue) !important;
+}
+
+:root.mu-theme-catpuccin a,
+:root.mu-theme-catpuccin .link,
+:root.mu-theme-catpuccin [class*="underline"] {
+  color: var(--mu-theme-lavender) !important;
+}
+
+:root.mu-theme-catpuccin .border-ds-brown,
+:root.mu-theme-catpuccin [class*="border-ds-brown"],
+:root.mu-theme-catpuccin .mu-label-settings-btn,
+:root.mu-theme-catpuccin .mu-label-settings-panel,
+:root.mu-theme-catpuccin .mu-onboarding-btn,
+:root.mu-theme-catpuccin .mu-goals-mini,
+:root.mu-theme-catpuccin .mu-streak-progress-bar,
+:root.mu-theme-catpuccin .mu-onboarding-card {
+  border-color: var(--mu-theme-lavender) !important;
+}
+
+:root.mu-theme-catpuccin .text-ds-brown,
+:root.mu-theme-catpuccin [class*="text-ds-brown"],
+:root.mu-theme-catpuccin .mu-ground-label,
+:root.mu-theme-catpuccin .mu-ground-label *,
+:root.mu-theme-catpuccin .mu-goal-mini-title,
+:root.mu-theme-catpuccin .mu-goal-mini-sub,
+:root.mu-theme-catpuccin .mu-onboarding-title,
+:root.mu-theme-catpuccin .mu-onboarding-body,
+:root.mu-theme-catpuccin .mu-label-settings-heading,
+:root.mu-theme-catpuccin .mu-label-settings-row span {
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin .mu-label-settings-panel,
+:root.mu-theme-catpuccin .mu-goals-mini,
+:root.mu-theme-catpuccin .mu-onboarding-card,
+:root.mu-theme-catpuccin .mu-streak-progress,
+:root.mu-theme-catpuccin .mu-label-settings-btn,
+:root.mu-theme-catpuccin .mu-onboarding-btn,
+:root.mu-theme-catpuccin .mu-goals-mini-mode-btn,
+:root.mu-theme-catpuccin .mu-theme-select {
+  background: var(--mu-theme-mantle) !important;
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini.mu-goals-mini {
+  background: var(--mu-theme-crust) !important;
+  color: var(--mu-theme-text) !important;
+  border-color: var(--mu-theme-lavender) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(180, 190, 254, 0.18),
+    0 10px 24px rgba(17, 17, 27, 0.34) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-title,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-pct,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-name,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-pct-chip,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-qty {
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-mode,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-stat,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-pill {
+  background: var(--mu-theme-surface-0) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-stat strong,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-stat span,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-sub,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-handle {
+  color: var(--mu-theme-subtext) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-mode-btn,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-btn {
+  background: var(--mu-theme-mantle) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-mode-btn.active {
+  background: var(--mu-theme-surface-1) !important;
+  border-color: var(--mu-theme-lavender) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-btn:hover,
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-mode-btn:hover {
+  border-color: var(--mu-theme-blue) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goal-mini-thumb {
+  background: var(--mu-theme-base) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-goals-mini .mu-goals-mini-progress {
+  background: var(--mu-theme-mantle) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+}
+
+:root.mu-theme-catpuccin .mu-onboarding-btn,
+:root.mu-theme-catpuccin .mu-goals-mini-mode-btn.active,
+:root.mu-theme-catpuccin .mu-onboarding-launch-btn {
+  background: var(--mu-theme-surface) !important;
+  color: var(--mu-theme-text) !important;
+}
+
+:root.mu-theme-catpuccin .mu-streak-progress-label,
+:root.mu-theme-catpuccin .mu-goals-mini-stat span,
+:root.mu-theme-catpuccin .mu-goal-mini-sub,
+:root.mu-theme-catpuccin .mu-ground-label-meta,
+:root.mu-theme-catpuccin .mu-onboarding-note {
+  color: var(--mu-theme-subtext) !important;
+}
+
+:root.mu-theme-catpuccin .mu-ground-label,
+:root.mu-theme-catpuccin .mu-ground-label-meta,
+:root.mu-theme-catpuccin .mu-ground-label-line {
+  filter: none !important;
+  opacity: 1 !important;
+  background: transparent !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-project-label-layer .mu-ground-label,
+:root.mu-theme-catpuccin #macondo-utils-project-label-layer .mu-ground-label-line,
+:root.mu-theme-catpuccin #macondo-utils-project-label-layer .mu-ground-label-meta,
+:root.mu-theme-catpuccin #macondo-utils-project-label-layer .mu-ground-label-inner {
+  color: var(--mu-theme-text) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  -webkit-text-stroke: 0 !important;
+  mix-blend-mode: normal !important;
+  text-shadow:
+    0 1px 1px rgba(17, 17, 27, 0.95),
+    0 0 3px rgba(17, 17, 27, 0.8) !important;
+}
+
+:root.mu-theme-catpuccin #macondo-utils-project-label-layer .mu-ground-label-meta {
+  color: var(--mu-theme-subtext) !important;
+  text-shadow:
+    0 1px 1px rgba(17, 17, 27, 0.95),
+    0 0 2px rgba(17, 17, 27, 0.75) !important;
+}
+
+:root.mu-theme-catpuccin .mu-streak-progress-bar {
+  background-color: color-mix(in srgb, var(--mu-theme-surface-1) 82%, black) !important;
+  background-image: linear-gradient(90deg, var(--mu-theme-mauve), var(--mu-theme-mauve)) !important;
+}
+
+:root.mu-theme-catpuccin .mu-goals-mini-progress-actual {
+  background: var(--mu-theme-green) !important;
+}
+
+:root.mu-theme-catpuccin .mu-goals-mini-progress-projected {
+  background: color-mix(in srgb, var(--mu-theme-mauve) 66%, transparent) !important;
+}
+
+:root.mu-theme-catpuccin .mu-onboarding-backdrop {
+  background: rgba(24, 24, 37, 0.6) !important;
+}
+
+:root.mu-theme-catpuccin .mu-onboarding-spotlight {
+  box-shadow: 0 0 0 9999px rgba(30, 30, 46, 0.58) !important;
+}
+
+:root.mu-theme-catpuccin [class*="badge"],
+:root.mu-theme-catpuccin [class*="chip"],
+:root.mu-theme-catpuccin [class*="tag"] {
+  background: color-mix(in srgb, var(--mu-theme-surface) 74%, transparent) !important;
+  color: var(--mu-theme-text) !important;
+  border-color: var(--mu-theme-surface-2) !important;
+}
+
+:root.mu-theme-catpuccin [class*="docs"],
+:root.mu-theme-catpuccin [class*="explore"],
+:root.mu-theme-catpuccin [class*="profile"],
+:root.mu-theme-catpuccin [class*="help"],
+:root.mu-theme-catpuccin [class*="shop"],
+:root.mu-theme-catpuccin [class*="project"] {
+  color: var(--mu-theme-text);
+}

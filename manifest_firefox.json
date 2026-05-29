@@ -27,13 +27,45 @@
       }
     }
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "themeassets/catpuccin/catpuccin_background.png",
+        "themeassets/catpuccin/images/dashboard/en/donkey.png",
+        "themeassets/catpuccin/images/dashboard/en/house.png",
+        "themeassets/catpuccin/images/dashboard/en/explore.png",
+        "themeassets/catpuccin/images/tierra/ground_tile.png",
+        "themeassets/catpuccin/images/dashboard/palma.png",
+        "themeassets/catpuccin/images/fruits/mango/etapa_1.png",
+        "themeassets/catpuccin/images/fruits/mango/etapa_2.png",
+        "themeassets/catpuccin/images/fruits/mango/etapa_3.png",
+        "themeassets/catpuccin/images/fruits/mango/etapa_4.png",
+        "themeassets/catpuccin/images/fruits/pineapple/etapa_1.png",
+        "themeassets/catpuccin/images/fruits/pineapple/etapa_2.png",
+        "themeassets/catpuccin/images/fruits/pineapple/etapa_3.png",
+        "themeassets/catpuccin/images/fruits/pineapple/etapa_4.png",
+        "themeassets/catpuccin/images/fruits/papaya/etapa_1.png",
+        "themeassets/catpuccin/images/fruits/papaya/etapa_2.png",
+        "themeassets/catpuccin/images/fruits/papaya/etapa_3.png",
+        "themeassets/catpuccin/images/fruits/papaya/etapa_4.png",
+        "themeassets/catpuccin/images/fruits/cocoa/etapa_1.png",
+        "themeassets/catpuccin/images/fruits/cocoa/etapa_2.png",
+        "themeassets/catpuccin/images/fruits/cocoa/etapa_3.png",
+        "themeassets/catpuccin/images/fruits/cocoa/etapa_4.png"
+      ],
+      "matches": [
+        "https://macondo.hackclub.com/*"
+      ]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [
         "https://macondo.hackclub.com/*"
       ],
       "css": [
-        "styles.css"
+        "styles.css",
+        "catpuccin.css"
       ],
       "js": [
         "content.js"

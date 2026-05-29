@@ -579,6 +579,21 @@
   color: #5a3e23;
 }
 
+#macondo-utils-project-label-settings .mu-theme-select-row {
+  justify-content: space-between;
+}
+
+#macondo-utils-project-label-settings .mu-theme-select {
+  min-width: 130px;
+  height: 30px;
+  border: 2px solid #7a5a34;
+  background: #fff8eb;
+  color: #4d341e;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 6px;
+}
+
 #macondo-utils-project-label-settings .mu-goals-settings {
   margin-top: 10px;
   padding-top: 10px;
