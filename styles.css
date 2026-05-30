@@ -784,18 +784,30 @@
 .mu-shop-goal-controls {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   align-self: flex-start;
-  margin-top: -2px;
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
+.mu-shop-goal-controls.mu-shop-goal-controls-star {
+  position: absolute;
+  top: 12px;
+  right: 44px;
+  z-index: 20;
+  padding: 2px 4px;
+  border: 1px solid rgba(104, 77, 58, 0.2);
+  background: rgba(242, 216, 183, 0.9);
+  border-radius: 6px;
 }
 
 .mu-shop-goal-btn {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: 1px solid rgba(104, 77, 58, 0.35);
   background: rgba(242, 216, 183, 0.9);
   color: #684d3a;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
   display: inline-flex;
@@ -805,10 +817,10 @@
 }
 
 .mu-shop-goal-qty {
-  min-width: 26px;
+  min-width: 20px;
   text-align: center;
   color: #684d3a;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 900;
 }
 

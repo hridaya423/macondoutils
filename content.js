@@ -5177,20 +5177,32 @@
     }
 
     const goal = getGoalForCandidate(candidate);
-    const qty = goal ? Math.max(1, Number(goal.quantity) || 1) : 0;
-    let controls = actionsWrap.querySelector(".mu-shop-goal-controls");
+    const unstarButton = card.querySelector("button[title*='Unstar'], button[aria-label*='Unstar']");
+    const existingControls = card.querySelector(".mu-shop-goal-controls");
+    if (!goal || !(unstarButton instanceof HTMLElement)) {
+      if (existingControls) {
+        withObserverSuppressed(() => {
+          existingControls.remove();
+        });
+      }
+      return;
+    }
+
+    const qty = Math.max(1, Number(goal.quantity) || 1);
+    const controlsHost = (unstarButton.parentElement instanceof HTMLElement) ? unstarButton.parentElement : card;
+    let controls = existingControls;
     if (!controls) {
       withObserverSuppressed(() => {
         controls = document.createElement("div");
         controls.className = "mu-shop-goal-controls";
-        const firstChild = actionsWrap.firstElementChild;
-        if (firstChild) {
-          firstChild.insertAdjacentElement("beforebegin", controls);
+        if (unstarButton.nextSibling) {
+          unstarButton.parentElement?.insertBefore(controls, unstarButton.nextSibling);
         } else {
-          actionsWrap.appendChild(controls);
+          controlsHost.appendChild(controls);
         }
       });
     }
+    controls.classList.add("mu-shop-goal-controls-star");
     const nextMarkup = `
       <button type='button' class='mu-shop-goal-btn' data-goal-card-adjust='-1' data-goal-card-item='${candidate.itemId || ""}'>-</button>
       <span class='mu-shop-goal-qty'>x${qty}</span>
@@ -5205,6 +5217,41 @@
     controls.dataset.goalCardName = candidate.name;
     controls.dataset.goalCardGold = String(candidate.unitGold);
     controls.dataset.goalCardImage = candidate.imageUrl || "";
+  }
+
+  function updateShopCardIncludesRate(card, computedHours) {
+    if (!(card instanceof Element) || !Number.isFinite(computedHours) || computedHours <= 0) {
+      return;
+    }
+    const includesNode = Array.from(card.querySelectorAll("span"))
+      .find((span) => /includes\s*\$/i.test(span.textContent || ""));
+    if (!(includesNode instanceof HTMLElement)) {
+      return;
+    }
+    if (!includesNode.dataset.muIncludesBaseText) {
+      includesNode.dataset.muIncludesBaseText = String(includesNode.textContent || "").trim();
+    }
+    const baseText = includesNode.dataset.muIncludesBaseText || String(includesNode.textContent || "").trim();
+    const valueMatch = baseText.match(/includes\s*\$\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)/i);
+    if (!valueMatch?.[1]) {
+      return;
+    }
+    const includesValue = Number.parseFloat(valueMatch[1].replace(/,/g, ""));
+    if (!Number.isFinite(includesValue) || includesValue <= 0) {
+      return;
+    }
+    const usdPerHour = includesValue / computedHours;
+    if (!Number.isFinite(usdPerHour) || usdPerHour <= 0) {
+      return;
+    }
+    const nextText = `${baseText} • $${usdPerHour.toFixed(2)}/hr`;
+    const nextTitle = `Includes value divided by time needed (${formatHours(computedHours)})`;
+    if (includesNode.textContent !== nextText || includesNode.title !== nextTitle) {
+      withObserverSuppressed(() => {
+        includesNode.textContent = nextText;
+        includesNode.title = nextTitle;
+      });
+    }
   }
 
   function syncAllShopCardGoalControls() {
@@ -5632,6 +5679,7 @@
           }
         });
       }
+      updateShopCardIncludesRate(card, computedHours);
       updatedCount += 1;
     });
   }
