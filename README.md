@@ -18,7 +18,7 @@ Quality-of-life browser extension for Macondo.
 
 ### Chrome
 **Option 1: Chrome Web Store**
-1. Visit the [Chrome Web Store]() (Coming soon)
+1. Visit the [Chrome Web Store](https://chromewebstore.google.com/detail/macondo-utils/ncdoiigcdhkcgeebfbhkfijglhjckhdi)
 2. Click "Add to Chrome"
 3. Confirm the installation when prompted
 
