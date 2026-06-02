@@ -5688,7 +5688,7 @@
   }
 
   function renderGoalsMiniBox() {
-    if (!isDashboardPage()) {
+    if (!isDashboardPage() && !isShopModalOpen()) {
       const existing = document.getElementById("macondo-utils-goals-mini");
       if (existing) {
         existing.remove();
