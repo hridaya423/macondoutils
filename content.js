@@ -2448,9 +2448,11 @@
     if (api.setPrefs) {
       api.setPrefs(next).then(() => {
         refreshProjectLabelSettingsPanel();
-        if (key === "enabled" && next.enabled && Object.keys(projectMetaById || {}).length) {
-          recordProjectMetricsSnapshot(projectMetaById).catch(() => {
-          });
+        if ((key === "enabled" && next.enabled) || (key === "projects" && checked)) {
+          if (Object.keys(projectMetaById || {}).length) {
+            recordProjectMetricsSnapshot(projectMetaById, true).catch(() => {
+            });
+          }
         }
       });
     }
@@ -2587,14 +2589,14 @@
     };
   }
 
-  async function recordProjectMetricsSnapshot(metaById) {
+  async function recordProjectMetricsSnapshot(metaById, force = false) {
     const snapshot = buildProjectMetricsSnapshot(metaById);
     if (!snapshot) {
       return false;
     }
     const serialized = JSON.stringify(snapshot);
     const previous = String(localStorage.getItem(PROJECT_METRICS_SNAPSHOT_CACHE_KEY) || "");
-    if (previous === serialized) {
+    if (!force && previous === serialized) {
       return false;
     }
     const enqueued = await enqueueTelemetry("project_metrics_snapshot", snapshot);
@@ -2656,9 +2658,10 @@
   }
 
   function buildProjectMeta(title, metrics) {
-    if (!metrics || !Number.isFinite(metrics.hours) || metrics.hours <= 0) {
+    if (!metrics || typeof metrics !== "object") {
       return null;
     }
+    const safeTitle = String(title || "").trim();
     const hours = Number(metrics.hours);
     const streakDays = Number.isFinite(metrics.streakDays) ? Math.max(0, Math.round(metrics.streakDays)) : 0;
     const level = Number.isFinite(metrics.level) ? Math.min(4, Math.max(1, Math.round(metrics.level))) : null;
@@ -2669,9 +2672,12 @@
       ? Math.max(0, Math.round(metrics.totalEarnedGold))
       : 0;
     const futureCoins = Math.max(0, estCoins - totalEarnedGold);
+    if (!safeTitle && level === null && hours <= 0 && streakDays <= 0) {
+      return null;
+    }
     return {
-      title: String(title || "").trim(),
-      hours,
+      title: safeTitle,
+      hours: Number.isFinite(hours) && hours > 0 ? hours : 0,
       streakDays,
       level,
       estCoins,
