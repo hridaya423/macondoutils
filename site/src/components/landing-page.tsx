@@ -1,14 +1,15 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useSyncExternalStore } from "react";
 import Image from "next/image";
 import Lenis from "lenis";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
-import { Target, Clock, X, Download, CheckCircle2, Zap, Flame, CalendarDays, MousePointerClick } from "lucide-react";
+import { Target, Clock, Download, Zap, Flame } from "lucide-react";
 
-const releaseUrl = "https://github.com/hridaya423/macondoutils/releases/";
+const chromeWebStoreUrl = "https://chromewebstore.google.com/detail/macondo-utils/ncdoiigcdhkcgeebfbhkfijglhjckhdi?authuser=4&hl=en-GB";
+const firefoxAddonUrl = "https://addons.mozilla.org/en-US/firefox/addon/macondo-utils/";
 const repoUrl = "https://github.com/hridaya423/macondoutils";
 
 if (typeof window !== "undefined") {
@@ -17,6 +18,25 @@ if (typeof window !== "undefined") {
 
 export default function LandingPage() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const browserStore = useSyncExternalStore(
+    () => () => {},
+    () => {
+      const ua = navigator.userAgent.toLowerCase();
+      if (ua.includes("firefox")) {
+        return "firefox";
+      }
+      if (ua.includes("chrome") || ua.includes("chromium") || ua.includes("edg") || ua.includes("opera")) {
+        return "chrome";
+      }
+      return "other";
+    },
+    () => "other",
+  );
+
+  const primaryInstallUrl = browserStore === "firefox" ? firefoxAddonUrl : chromeWebStoreUrl;
+  const primaryInstallLabel = browserStore === "firefox" ? "Install for Firefox" : "Install for Chrome";
+  const primaryInstallCta = browserStore === "firefox" ? "Firefox Add-ons" : "Chrome Web Store";
+  const fallbackInstallUrl = browserStore === "firefox" ? chromeWebStoreUrl : firefoxAddonUrl;
   
   useEffect(() => {
     const lenis = new Lenis({
@@ -64,20 +84,6 @@ export default function LandingPage() {
         }
       });
     }
-    gsap.fromTo(".roast-item",
-      { y: 40, opacity: 0 },
-      {
-        y: 0, opacity: 1,
-        duration: 1,
-        stagger: 0.2,
-        ease: "power3.out",
-        scrollTrigger: {
-          trigger: ".roast-section",
-          start: "top 70%",
-        }
-      }
-    );
-
   }, { scope: containerRef });
 
   return (
@@ -89,12 +95,12 @@ export default function LandingPage() {
           <div className="nav-element font-heading font-bold text-xl tracking-tight flex items-center pointer-events-auto">
             Macondo Utils
           </div>
-          <div className="nav-element pointer-events-auto">
-            <a href={releaseUrl} className="text-sm font-medium bg-[#2D1B11] text-[#FFF9F2] px-5 py-2.5 rounded-full hover:bg-[#9C6B4E] transition-colors duration-300 flex items-center gap-2 shadow-lg">
-              <Download size={14} />
-              Install
-            </a>
-          </div>
+            <div className="nav-element pointer-events-auto">
+              <a href={primaryInstallUrl} className="text-sm font-medium bg-[#2D1B11] text-[#FFF9F2] px-5 py-2.5 rounded-full hover:bg-[#9C6B4E] transition-colors duration-300 flex items-center gap-2 shadow-lg">
+                <Download size={14} />
+                {primaryInstallCta}
+              </a>
+            </div>
         </div>
       </nav>
 
@@ -109,10 +115,13 @@ export default function LandingPage() {
             See better estimates, clearer progress, and the details you actually need while using Macondo.
           </p>
 
-          <div className="hero-text flex justify-center gap-4 mt-10">
-             <a href={releaseUrl} className="px-8 py-4 bg-[#2D1B11] text-white rounded-full font-semibold hover:bg-[#9C6B4E] transition-colors duration-300 flex items-center gap-2 text-lg">
-                Install Macondo Utils <Zap size={18} />
-              </a>
+           <div className="hero-text flex flex-col sm:flex-row justify-center gap-4 mt-10">
+              <a href={primaryInstallUrl} className="px-8 py-4 bg-[#2D1B11] text-white rounded-full font-semibold hover:bg-[#9C6B4E] transition-colors duration-300 flex items-center gap-2 text-lg justify-center">
+                 {primaryInstallLabel} <Zap size={18} />
+               </a>
+              <a href={fallbackInstallUrl} className="px-8 py-4 bg-white text-[#2D1B11] rounded-full font-semibold hover:bg-[#F5EFEB] transition-colors duration-300 flex items-center gap-2 text-lg justify-center border border-[#E8D9CE]">
+                 {browserStore === "firefox" ? "Chrome Web Store" : "Firefox Add-ons"}
+               </a>
           </div>
         </div>
       </section>
@@ -226,62 +235,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="roast-section py-24 md:py-32 px-6 bg-[#FFF9F2] relative border-b border-[#E8D9CE]">
-         <div className="max-w-5xl mx-auto">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl md:text-5xl font-heading font-bold tracking-tight mt-6 text-[#2D1B11]">
-                One tool adds real quality-of-life improvements.<br/>
-                The other notices a little later.
-              </h2>
-            </div>
-
-            <div className="space-y-6">
-              <div className="roast-item bg-white p-6 rounded-3xl border border-[#E8D9CE] shadow-sm flex flex-col md:flex-row gap-6 hover:shadow-md transition-shadow">
-                 <div className="flex-1 p-6 md:border-r border-[#E8D9CE] bg-[#F5EFEB] rounded-2xl opacity-70">
-                    <div className="flex items-center gap-2 mb-4">
-                       <X size={20} className="text-[#9C6B4E]" />
-                       <h4 className="font-bold text-lg text-[#2D1B11]">Macondo+ had a whole month and still pulled up late copying Macondo Utils.</h4>
-                    </div>
-                    <p className="text-[#8A6E59] leading-relaxed">
-                      Macondo Utils is 4 days old. Macondo+ had 31 days. Macondo Utils shipped personalized shop estimates first. Macondo+ dropped its version yesterday. Coincidence? I think not.
-                    </p>
-                 </div>
-                 <div className="flex-1 p-6">
-                    <div className="flex items-center gap-2 mb-4">
-                       <CheckCircle2 size={20} className="text-[#40A86A]" />
-                       <h4 className="font-bold text-lg text-[#2D1B11]">Macondo Utils moves different.</h4>
-                    </div>
-                    <p className="text-[#8A6E59] leading-relaxed">
-                      Macondo Utils sees the gap and ships with real taste. Macondo+ had the early headstart, waited for the actual QoL improvements, then copied. 27 days of junk features before Macondo Utils dropped, then sudden &quot;innovation.&quot;
-                    </p>
-                  </div>
-              </div>
-
-              <div className="roast-item bg-white p-6 rounded-3xl border border-[#E8D9CE] shadow-sm flex flex-col md:flex-row gap-6 hover:shadow-md transition-shadow">
-                 <div className="flex-1 p-6 md:border-r border-[#E8D9CE] bg-[#F5EFEB] rounded-2xl opacity-70">
-                    <div className="flex items-center gap-2 mb-4">
-                       <X size={20} className="text-[#9C6B4E]" />
-                       <h4 className="font-bold text-lg text-[#2D1B11]">Macondo+ makes whatever junk keeps the streak going</h4>
-                    </div>
-                    <p className="text-[#8A6E59] leading-relaxed">
-                      When Macondo+ has nothing real to build, out comes the junk. Joke modules. Random toggles. Side quests. Anything to keep the streak breathing and make the repo look busy with &quot;50 commits per week and trying to have some fun&quot;
-                    </p>
-                 </div>
-                 <div className="flex-1 p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                     <CheckCircle2 size={20} className="text-[#40A86A]" />
-                      <h4 className="font-bold text-lg text-[#2D1B11]">Macondo Utils makes QoL to actually improve the user experience</h4>
-                  </div>
-                  <p className="text-[#8A6E59] leading-relaxed">
-                      Macondo Utils ships actual QoL because we genuinely enjoy improving the user experience. Macondo+ ships junk because Macondo+ cannot find any real QoL to improve, so it is filler and bloat.
-                  </p>
-                 </div>
-              </div>
-
-            </div>
-         </div>
-      </section>
-
       <section id="install" className="relative py-32 md:py-40 px-6 bg-[#FFF9F2]">
          <div className="max-w-3xl mx-auto text-center z-10">
             <h2 className="text-4xl md:text-5xl font-heading font-bold tracking-tight mb-6">Ready to upgrade?</h2>
@@ -289,13 +242,16 @@ export default function LandingPage() {
               Install the extension and instantly gain QoL that certain other tools cannot provide.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <a href={releaseUrl} className="w-full sm:w-auto px-8 py-3.5 bg-[#2D1B11] text-white rounded-full font-semibold hover:bg-[#9C6B4E] transition-colors duration-300 flex items-center justify-center gap-2">
-                <Download size={18} />
-                Install for Chrome
-              </a>
-              <a href={repoUrl} className="w-full sm:w-auto px-8 py-3.5 bg-white text-[#2D1B11] rounded-full font-semibold hover:bg-[#F5EFEB] transition-colors duration-300 border border-[#E8D9CE]">
-                View Documentation
-              </a>
+               <a href={primaryInstallUrl} className="w-full sm:w-auto px-8 py-3.5 bg-[#2D1B11] text-white rounded-full font-semibold hover:bg-[#9C6B4E] transition-colors duration-300 flex items-center justify-center gap-2">
+                 <Download size={18} />
+                 {primaryInstallLabel}
+               </a>
+               <a href={fallbackInstallUrl} className="w-full sm:w-auto px-8 py-3.5 bg-white text-[#2D1B11] rounded-full font-semibold hover:bg-[#F5EFEB] transition-colors duration-300 border border-[#E8D9CE] flex items-center justify-center gap-2">
+                 {browserStore === "firefox" ? "Install for Chrome" : "Install for Firefox"}
+               </a>
+               <a href={repoUrl} className="w-full sm:w-auto px-8 py-3.5 bg-white text-[#2D1B11] rounded-full font-semibold hover:bg-[#F5EFEB] transition-colors duration-300 border border-[#E8D9CE]">
+                 View Documentation
+               </a>
             </div>
          </div>
       </section>
