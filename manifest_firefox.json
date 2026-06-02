@@ -9,7 +9,11 @@
     "128": "assets/icon128.png"
   },
   "permissions": [
-    "tabs"
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://macondoutils.hridya.tech/*"
   ],
   "background": {
     "scripts": [
@@ -68,6 +72,7 @@
         "catpuccin.css"
       ],
       "js": [
+        "telemetry.js",
         "content.js"
       ],
       "run_at": "document_idle"

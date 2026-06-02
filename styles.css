@@ -616,6 +616,68 @@
   background: rgba(232, 205, 164, 0.95);
 }
 
+#macondo-utils-project-label-settings .mu-telemetry-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 2px solid rgba(111, 79, 43, 0.25);
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-blurb {
+  margin: 4px 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: rgba(90, 62, 35, 0.75);
+  white-space: normal;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-master {
+  font-weight: 900;
+  color: #4d341e;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-sub {
+  padding-left: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(90, 62, 35, 0.6);
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-sub input {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  accent-color: #6f4f2b;
+  cursor: not-allowed;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-sub:not(.mu-telemetry-disabled) {
+  color: #5a3e23;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-sub:not(.mu-telemetry-disabled) input {
+  cursor: pointer;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-sub.mu-telemetry-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-privacy-link {
+  display: inline-block;
+  margin: 6px 0 0 28px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6f4f2b;
+  text-decoration: underline;
+}
+
+#macondo-utils-project-label-settings .mu-telemetry-privacy-link:hover {
+  color: #4d341e;
+}
+
 #macondo-utils-project-label-settings .mu-goal-add {
   display: grid;
   grid-template-columns: 1fr 64px auto;

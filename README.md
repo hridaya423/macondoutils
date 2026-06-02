@@ -53,3 +53,7 @@ Quality-of-life browser extension for Macondo.
 6. Check the `Allow unsigned extensions` checkbox at the bottom
 7. Click `Add temporary extension`
 8. Select the folder you downloaded and unzipped earlier
+
+## Telemetry
+
+Macondo Utils can send anonymous, opt-in usage stats to `https://macondoutils.hridya.tech` to help the project understand which features are useful. Telemetry is off by default and per-category. Categories include activity, goals, shop, project level/streak snapshots, theme, and errors. See the [Privacy Policy](https://macondoutils.hridya.tech/privacy) for details.

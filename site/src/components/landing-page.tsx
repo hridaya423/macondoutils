@@ -6,7 +6,8 @@ import Lenis from "lenis";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { useGSAP } from "@gsap/react";
-import { Target, Clock, Download, Zap, Flame } from "lucide-react";
+import { Target, Clock, Download, Zap, Flame, BarChart3 } from "lucide-react";
+import LiveStatsBadge from "@/components/live-stats-badge";
 
 const chromeWebStoreUrl = "https://chromewebstore.google.com/detail/macondo-utils/ncdoiigcdhkcgeebfbhkfijglhjckhdi?authuser=4&hl=en-GB";
 const firefoxAddonUrl = "https://addons.mozilla.org/en-US/firefox/addon/macondo-utils/";
@@ -237,6 +238,9 @@ export default function LandingPage() {
 
       <section id="install" className="relative py-32 md:py-40 px-6 bg-[#FFF9F2]">
          <div className="max-w-3xl mx-auto text-center z-10">
+            <div className="mb-6 flex justify-center">
+              <LiveStatsBadge />
+            </div>
             <h2 className="text-4xl md:text-5xl font-heading font-bold tracking-tight mb-6">Ready to upgrade?</h2>
             <p className="text-lg text-[#8A6E59] mb-10 max-w-xl mx-auto">
               Install the extension and instantly gain QoL that certain other tools cannot provide.
@@ -253,6 +257,13 @@ export default function LandingPage() {
                  View Documentation
                </a>
             </div>
+            <a
+              href="/stats"
+              className="mt-8 inline-flex items-center gap-2 text-sm font-medium text-[#8A6E59] hover:text-[#2D1B11] transition-colors"
+            >
+              <BarChart3 size={16} />
+              See live, opt-in usage stats
+            </a>
          </div>
       </section>
 

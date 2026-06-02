@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local telemetry aggregates written by `next dev`
+/.telemetry/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

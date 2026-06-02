@@ -21,6 +21,7 @@
   const PROJECT_LABEL_PREFS_CACHE_KEY = "macondo_utils_project_label_prefs";
   const PROJECT_GOALS_CACHE_KEY = "macondo_utils_project_goals";
   const PROJECT_GOALS_ORDER_SYNC_CACHE_KEY = "macondo_utils_project_goals_order_sync";
+  const PROJECT_METRICS_SNAPSHOT_CACHE_KEY = "macondo_utils_project_metrics_snapshot";
   const PROJECT_RATE_CACHE_TTL_MS = 2 * 60 * 1000;
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
@@ -1587,6 +1588,8 @@
     }
     if (changedTitles || changedMeta) {
       queueProjectGroundLabelsSync();
+      recordProjectMetricsSnapshot(mergedMeta).catch(() => {
+      });
     }
 
     const recomputed = applyEffectiveGoldPerHourFromMeta(mergedMeta, harvestedIds)
@@ -1730,6 +1733,9 @@
     }
 
     const title = String(project.name || fallbackMeta?.title || "").trim();
+    const level = Number.isFinite(Number(project.level))
+      ? Math.max(1, Math.round(Number(project.level)))
+      : (Number.isFinite(Number(fallbackMeta?.level)) ? Math.max(1, Math.round(Number(fallbackMeta.level))) : null);
     const streakDays = Number.isFinite(Number(project.project_streak_days))
       ? Math.max(0, Math.round(Number(project.project_streak_days)))
       : Math.max(0, Math.round(Number(fallbackMeta?.streakDays) || 0));
@@ -1752,7 +1758,8 @@
       estCoins,
       totalEarnedGold: fallbackTotalEarnedGold,
       futureCoins,
-      goldPerHour: Number.isFinite(goldPerHour) ? goldPerHour : null
+      goldPerHour: Number.isFinite(goldPerHour) ? goldPerHour : null,
+      level
     };
   }
 
@@ -2247,12 +2254,15 @@
       title,
       hours: 0,
       streakDays: 0,
+      level: Number.isFinite(Number(level)) ? Math.max(1, Math.round(Number(level))) : null,
       estCoins: 0,
       totalEarnedGold: 0,
       futureCoins: 0,
       goldPerHour: Number.isFinite(goldPerHour) ? goldPerHour : null,
       hackatimeProjects: Array.isArray(optionalPayload?.hackatimeProjects) ? optionalPayload.hackatimeProjects.slice() : []
     };
+    recordProjectMetricsSnapshot(projectMetaById).catch(() => {
+    });
   }
 
   function readCachedRate() {
@@ -2401,6 +2411,195 @@
     };
   }
 
+  function getTelemetryApi() {
+    return typeof window !== "undefined" ? window.muTelemetry || null : null;
+  }
+
+  function enqueueTelemetry(eventType, payload) {
+    const api = getTelemetryApi();
+    if (!api) return false;
+    try {
+      return api.enqueue(eventType, payload || {});
+    } catch {
+      return false;
+    }
+  }
+
+  function handleTelemetryPrefChange(key, checked) {
+    const api = getTelemetryApi();
+    if (!api) return;
+    const current = api.getPrefs ? api.getPrefs() : {};
+    const next = { ...current, [key]: Boolean(checked) };
+    if (key === "enabled" && !next.enabled) {
+      next.activity = false;
+      next.goals = false;
+      next.shop = false;
+      next.projects = false;
+      next.theme = false;
+      next.errors = false;
+    } else if (key === "enabled" && next.enabled) {
+      next.activity = true;
+      next.goals = true;
+      next.shop = true;
+      next.projects = true;
+      next.theme = true;
+      next.errors = true;
+    }
+    if (api.setPrefs) {
+      api.setPrefs(next).then(() => {
+        refreshProjectLabelSettingsPanel();
+      });
+    }
+  }
+
+  function refreshProjectLabelSettingsPanel() {
+    const root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
+    if (!(root instanceof HTMLElement)) return;
+    const panel = root.querySelector(".mu-label-settings-panel");
+    if (!(panel instanceof HTMLElement)) return;
+    syncTelemetryPrefInputs(panel);
+  }
+
+  function syncTelemetryPrefInputs(panel) {
+    if (!(panel instanceof HTMLElement)) return;
+    const api = getTelemetryApi();
+    const prefs = api && api.getPrefs ? api.getPrefs() : {};
+    const masterEnabled = prefs.enabled === true;
+    Array.from(panel.querySelectorAll("input[type='checkbox'][data-telemetry-key]"))
+      .forEach((node) => {
+        const input = node;
+        const key = input.dataset.telemetryKey;
+        if (!key) return;
+        const value = prefs[key];
+        if (key === "enabled") {
+          input.checked = masterEnabled;
+          input.disabled = false;
+        } else {
+          input.checked = value === true;
+          input.disabled = !masterEnabled;
+        }
+        const row = input.closest(".mu-label-settings-row");
+        if (row instanceof HTMLElement) {
+          row.classList.toggle("mu-telemetry-disabled", input.disabled);
+        }
+      });
+  }
+
+  function recordGoalEvent(type, goal) {
+    if (!goal) return;
+    const payload = {
+      goal_id: goal.itemId ? String(goal.itemId) : goal.id,
+      name: goal.name,
+    };
+    if (type === "goal_qty_changed") {
+      payload.quantity = Math.max(0, Math.round(Number(goal.quantity) || 0));
+    }
+    enqueueTelemetry(type, payload);
+  }
+
+  function recordShopInteractEvent(candidate) {
+    if (!candidate) return;
+    const payload = {
+      item_id: candidate.itemId ? String(candidate.itemId) : (candidate.name || "unknown"),
+      name: candidate.name,
+      gold: Math.max(0, Math.round(Number(candidate.unitGold) || 0)),
+    };
+    enqueueTelemetry("shop_card_interact", payload);
+  }
+
+  function recordThemePresetEvent(preset) {
+    if (preset !== "default" && preset !== "dark") return;
+    enqueueTelemetry("theme_preset_changed", { preset });
+  }
+
+  function recordSessionStart() {
+    const path = String(window.location?.pathname || "/");
+    enqueueTelemetry("session_start", { path });
+  }
+
+  function recordOnboardingCompleted(flowVersion) {
+    enqueueTelemetry("onboarding_completed", { flow_version: String(flowVersion || "unknown") });
+  }
+
+  function recordErrorTelemetry(kind, message) {
+    enqueueTelemetry("error_reported", {
+      kind: String(kind || "generic").slice(0, 80),
+      message: String(message || "").slice(0, 500),
+    });
+  }
+
+  function medianFromSortedNumbers(values) {
+    const list = Array.isArray(values)
+      ? values.map((value) => Number(value)).filter((value) => Number.isFinite(value)).sort((a, b) => a - b)
+      : [];
+    if (!list.length) {
+      return 0;
+    }
+    const mid = Math.floor(list.length / 2);
+    if (list.length % 2 === 1) {
+      return list[mid];
+    }
+    return (list[mid - 1] + list[mid]) / 2;
+  }
+
+  function buildProjectMetricsSnapshot(metaById) {
+    const entries = Object.values(metaById || {}).filter(Boolean);
+    if (!entries.length) {
+      return null;
+    }
+
+    const levelCounts = new Map();
+    const streakCounts = new Map();
+    const levelValues = [];
+    const streakValues = [];
+
+    entries.forEach((meta) => {
+      const level = Number.isFinite(Number(meta.level)) ? Math.max(1, Math.round(Number(meta.level))) : null;
+      const streakDays = Number.isFinite(Number(meta.streakDays)) ? Math.max(0, Math.round(Number(meta.streakDays))) : null;
+      if (level !== null) {
+        levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
+        levelValues.push(level);
+      }
+      if (streakDays !== null) {
+        streakCounts.set(streakDays, (streakCounts.get(streakDays) || 0) + 1);
+        streakValues.push(streakDays);
+      }
+    });
+
+    if (!levelValues.length && !streakValues.length) {
+      return null;
+    }
+
+    return {
+      project_count: entries.length,
+      median_level: medianFromSortedNumbers(levelValues),
+      median_streak_days: medianFromSortedNumbers(streakValues),
+      level_counts: Array.from(levelCounts.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([level, count]) => ({ level, count })),
+      streak_counts: Array.from(streakCounts.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([streak_days, count]) => ({ streak_days, count })),
+    };
+  }
+
+  async function recordProjectMetricsSnapshot(metaById) {
+    const snapshot = buildProjectMetricsSnapshot(metaById);
+    if (!snapshot) {
+      return false;
+    }
+    const serialized = JSON.stringify(snapshot);
+    const previous = String(localStorage.getItem(PROJECT_METRICS_SNAPSHOT_CACHE_KEY) || "");
+    if (previous === serialized) {
+      return false;
+    }
+    const enqueued = enqueueTelemetry("project_metrics_snapshot", snapshot);
+    if (enqueued) {
+      localStorage.setItem(PROJECT_METRICS_SNAPSHOT_CACHE_KEY, serialized);
+    }
+    return enqueued;
+  }
+
   function readGoalsCache() {
     const raw = localStorage.getItem(PROJECT_GOALS_CACHE_KEY);
     if (!raw) {
@@ -2458,6 +2657,7 @@
     }
     const hours = Number(metrics.hours);
     const streakDays = Number.isFinite(metrics.streakDays) ? Math.max(0, Math.round(metrics.streakDays)) : 0;
+    const level = Number.isFinite(metrics.level) ? Math.max(1, Math.round(metrics.level)) : null;
     const estCoins = Number.isFinite(metrics.estCoins)
       ? Math.max(0, Math.round(metrics.estCoins))
       : Number.isFinite(metrics.goldPerHour) ? Math.max(0, Math.round(hours * Number(metrics.goldPerHour))) : 0;
@@ -2469,6 +2669,7 @@
       title: String(title || "").trim(),
       hours,
       streakDays,
+      level,
       estCoins,
       totalEarnedGold,
       futureCoins,
@@ -3010,6 +3211,7 @@
     }
     syncAllShopCardGoalControls();
     queueGoalsMiniRender();
+    recordGoalEvent("goal_qty_changed", projectGoals[idx]);
   }
 
   function removeGoalById(goalId) {
@@ -3017,6 +3219,7 @@
     if (!id) {
       return;
     }
+    const removed = projectGoals.find((goal) => goal.id === id);
     const nextGoals = projectGoals.filter((goal) => goal.id !== id);
     if (nextGoals.length === projectGoals.length) {
       return;
@@ -3029,6 +3232,7 @@
     }
     syncAllShopCardGoalControls();
     queueGoalsMiniRender();
+    recordGoalEvent("goal_removed", removed);
   }
 
   function reorderGoal(dragId, targetId) {
@@ -3202,6 +3406,18 @@
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudProgressStat' checked /> <span>Show progress box</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudRemainingStat' checked /> <span>Show remaining box</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudEtaStat' checked /> <span>Show ETA box</span></label>",
+        "<div class='mu-telemetry-section'>",
+        "<div class='mu-label-settings-heading'>Anonymous telemetry (opt-in)</div>",
+        "<p class='mu-telemetry-blurb'>Help us understand which features are useful. Anonymous counters only. No account data, no page content, no project titles.</p>",
+        "<label class='mu-label-settings-row mu-telemetry-master'><input type='checkbox' data-telemetry-key='enabled' /> <span>Share anonymous usage stats</span></label>",
+        "<label class='mu-label-settings-row mu-telemetry-sub'><input type='checkbox' data-telemetry-key='activity' /> <span>Activity status (heartbeat)</span></label>",
+        "<label class='mu-label-settings-row mu-telemetry-sub'><input type='checkbox' data-telemetry-key='goals' /> <span>Goal items I star &amp; change</span></label>",
+        "<label class='mu-label-settings-row mu-telemetry-sub'><input type='checkbox' data-telemetry-key='shop' /> <span>Shop items I interact with</span></label>",
+        "<label class='mu-label-settings-row mu-telemetry-sub'><input type='checkbox' data-telemetry-key='projects' /> <span>Project levels &amp; streaks</span></label>",
+        "<label class='mu-label-settings-row mu-telemetry-sub'><input type='checkbox' data-telemetry-key='theme' /> <span>Theme preset changes</span></label>",
+        "<label class='mu-label-settings-row mu-telemetry-sub'><input type='checkbox' data-telemetry-key='errors' /> <span>Errors only</span></label>",
+        "<a class='mu-telemetry-privacy-link' href='https://macondoutils.hridya.tech/privacy' target='_blank' rel='noreferrer'>Read the privacy policy</a>",
+        "</div>",
         "<button type='button' class='mu-onboarding-launch-btn' data-open-onboarding='true'>Open feature walkthrough</button>",
         "</div>"
       ].join("");
@@ -3253,6 +3469,16 @@
         };
         writeProjectLabelPrefsCache(projectLabelPrefs);
         applySelectedTheme();
+        recordThemePresetEvent(nextTheme);
+      });
+
+      panel.addEventListener("change", (event) => {
+        const input = event.target instanceof HTMLInputElement ? event.target : null;
+        const key = input?.dataset?.telemetryKey;
+        if (!input || !key) {
+          return;
+        }
+        handleTelemetryPrefChange(key, input.checked);
       });
 
       panel.addEventListener("click", (event) => {
@@ -3347,6 +3573,7 @@
         }
         input.checked = projectLabelPrefs[key] !== false;
       });
+    syncTelemetryPrefInputs(panel);
     const themeSelect = panel.querySelector("select[data-theme-key='theme']");
     if (themeSelect instanceof HTMLSelectElement) {
       themeSelect.value = normalizeTheme(projectLabelPrefs.theme);
@@ -4223,6 +4450,8 @@
       }
       if (titlesBefore !== titlesAfter || metaBefore !== metaAfter) {
         queueProjectGroundLabelsSync();
+        recordProjectMetricsSnapshot(mergedMeta).catch(() => {
+        });
       }
 
       lastProjectMetaRefreshAt = Date.now();
@@ -4411,6 +4640,15 @@
         title: "Project labels are on the farm now",
         body: "Each project tile can show time, streak, and estimated coins without opening anything.",
         target: () => document.querySelector(`#${PROJECT_LABEL_LAYER_ID} .mu-ground-label`)
+      },
+      {
+        id: "telemetry",
+        view: "dashboard",
+        title: "Share anonymous stats?",
+        body: "Optional. If you turn this on, Macondo Utils sends a tiny anonymous heartbeat and the names of goal items you star. We use it to count active users and learn which features matter. No account data, no page content, no project titles. You can change this any time.",
+        target: () => document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-telemetry-master`),
+        primaryAction: "enable",
+        primaryLabel: "Turn on stats"
       }
       ]
     };
@@ -4659,6 +4897,7 @@
     writeOnboardingState({ ...state, completed: true, dismissed: false });
     closeProjectLabelSettingsPanel();
     removeOnboardingUi();
+    recordOnboardingCompleted(state.version || "unknown");
   }
 
   function dismissOnboarding() {
@@ -4701,6 +4940,10 @@
     if (action === "goto-shop") {
       writeOnboardingState({ ...state, step: nextStep, completed: false, dismissed: false });
       window.location.assign("/shop");
+    }
+    if (action === "enable") {
+      handleTelemetryPrefChange("enabled", true);
+      setOnboardingStep(nextStep + 1);
     }
   }
 
@@ -5106,6 +5349,7 @@
       upsertGoal(candidate);
       refreshGoalOrderStatus();
     }
+    recordShopInteractEvent(candidate);
   }
 
   function handleGoalsMiniActionClick(event) {
@@ -5331,6 +5575,7 @@
       }
       return goal.name.toLowerCase() === normalized.name.toLowerCase();
     });
+    let wasAdded = false;
     if (existingIndex >= 0) {
       projectGoals[existingIndex] = {
         ...projectGoals[existingIndex],
@@ -5339,6 +5584,7 @@
       };
     } else {
       projectGoals.push(normalized);
+      wasAdded = true;
     }
     writeGoalsCache(projectGoals);
     const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
@@ -5347,11 +5593,23 @@
     }
     syncAllShopCardGoalControls();
     queueGoalsMiniRender();
+    if (wasAdded) {
+      recordGoalEvent("goal_added", normalized);
+    }
   }
 
   function removeGoalByItemOrName(goalInput) {
     const itemId = Number(goalInput?.itemId);
     const name = String(goalInput?.name || "").trim().toLowerCase();
+    const removed = projectGoals.find((goal) => {
+      if (Number.isFinite(itemId) && itemId > 0 && goal.itemId) {
+        return goal.itemId === itemId;
+      }
+      if (name) {
+        return goal.name.toLowerCase() === name;
+      }
+      return false;
+    });
     const next = projectGoals.filter((goal) => {
       if (Number.isFinite(itemId) && itemId > 0 && goal.itemId) {
         return goal.itemId !== itemId;
@@ -5372,6 +5630,7 @@
     }
     syncAllShopCardGoalControls();
     queueGoalsMiniRender();
+    recordGoalEvent("goal_removed", removed);
   }
 
   function pruneCompletedGoalsByOrders() {
@@ -5900,6 +6159,19 @@
   refreshProjectLabelMeta();
   refreshEffectiveRate();
   refreshGoalOrderStatus();
+  recordSessionStart();
+  window.addEventListener("pagehide", () => {
+    const api = getTelemetryApi();
+    if (api && typeof api.flush === "function") {
+      try { api.flush(); } catch { /* ignore */ }
+    }
+  });
+  window.addEventListener("beforeunload", () => {
+    const api = getTelemetryApi();
+    if (api && typeof api.flush === "function") {
+      try { api.flush(); } catch { /* ignore */ }
+    }
+  });
   setInterval(() => {
     refreshProjectLabelMeta();
   }, PROJECT_LABEL_META_REFRESH_MS);
