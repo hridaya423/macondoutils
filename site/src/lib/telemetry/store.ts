@@ -7,21 +7,54 @@ import {
 
 const HOUR_SECONDS = 60 * 60;
 const DAY_SECONDS = 24 * HOUR_SECONDS;
-const WEEK_SECONDS = 7 * DAY_SECONDS;
+const HLL_RETENTION_DAYS = 35;
+const DEDUPE_RETENTION_DAYS = 2;
+const KNOWN_BROWSERS = ["chrome", "firefox", "edge", "safari", "opera", "arc", "brave", "other"] as const;
 
 const KEYS = {
-  hllDay: "mu:t:hll:1d",
-  hllWeek: "mu:t:hll:7d",
-  hllMonth: "mu:t:hll:30d",
   categories: "mu:t:categories",
   topGoals: "mu:t:top:goals",
   projectLevels: "mu:t:project:levels",
   projectStreaks: "mu:t:project:streaks",
   themes: "mu:t:themes",
-  browsers: "mu:t:browsers",
   seq: (id: string) => `mu:t:seq:${id}`,
   lastSeen: (id: string) => `mu:t:last:${id}`,
+  hllDaily: (day: string) => `mu:t:hll:day:${day}`,
+  browserDaily: (browser: string, day: string) => `mu:t:hll:browser:${browser}:${day}`,
+  topShop: "mu:t:top:shop",
+  dedupeGoal: (day: string, key: string) => `mu:t:dedupe:goal:${day}:${key}`,
+  dedupeShop: (day: string, key: string) => `mu:t:dedupe:shop:${day}:${key}`,
 };
+
+function dayBucket(timestampMs = Date.now()): string {
+  return new Date(timestampMs).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+function recentDayBuckets(days: number, nowMs = Date.now()): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < days; i += 1) {
+    out.push(dayBucket(nowMs - i * DAY_SECONDS * 1000));
+  }
+  return out;
+}
+
+function clampBrowser(browser?: string): string | null {
+  return browser && KNOWN_BROWSERS.includes(browser as (typeof KNOWN_BROWSERS)[number]) ? browser : null;
+}
+
+async function recordUniqueDailyInteraction(
+  kv: ReturnType<typeof getKV>,
+  dedupeKey: string,
+  installId: string,
+  leaderboardKey: string,
+  member: string,
+): Promise<void> {
+  const added = await kv.sadd(dedupeKey, installId);
+  if (added === 1) {
+    await kv.expire(dedupeKey, DEDUPE_RETENTION_DAYS * DAY_SECONDS);
+    await kv.zincrby(leaderboardKey, 1, member);
+  }
+}
 
 function goalKey(goalId: string, name: string): string {
   return `${goalId}:${name}`;
@@ -58,19 +91,15 @@ export async function recordEventBatch(params: {
     return { accepted: 0, rejected };
   }
 
-  if (browser) {
-    await kv.zincrby(KEYS.browsers, 1, browser);
-  }
-
+  const today = dayBucket();
+  const browserFamily = clampBrowser(browser);
   await Promise.all([
-    kv.pfadd(KEYS.hllDay, installId),
-    kv.pfadd(KEYS.hllWeek, installId),
-    kv.pfadd(KEYS.hllMonth, installId),
+    kv.pfadd(KEYS.hllDaily(today), installId),
+    ...(browserFamily ? [kv.pfadd(KEYS.browserDaily(browserFamily, today), installId)] : []),
   ]);
   await Promise.all([
-    kv.expire(KEYS.hllDay, DAY_SECONDS),
-    kv.expire(KEYS.hllWeek, WEEK_SECONDS),
-    kv.expire(KEYS.hllMonth, 30 * DAY_SECONDS),
+    kv.expire(KEYS.hllDaily(today), HLL_RETENTION_DAYS * DAY_SECONDS),
+    ...(browserFamily ? [kv.expire(KEYS.browserDaily(browserFamily, today), HLL_RETENTION_DAYS * DAY_SECONDS)] : []),
   ]);
 
   for (const ev of accepted) {
@@ -81,10 +110,22 @@ export async function recordEventBatch(params: {
       case "goal_added":
       case "goal_removed":
       case "goal_qty_changed":
-        await kv.zincrby(KEYS.topGoals, 1, goalKey(ev.goal_id, ev.name));
+        await recordUniqueDailyInteraction(
+          kv,
+          KEYS.dedupeGoal(today, goalKey(ev.goal_id, ev.name)),
+          installId,
+          KEYS.topGoals,
+          goalKey(ev.goal_id, ev.name),
+        );
         break;
       case "shop_card_interact":
-        await kv.zincrby("mu:t:top:shop", 1, goalKey(ev.item_id, ev.name));
+        await recordUniqueDailyInteraction(
+          kv,
+          KEYS.dedupeShop(today, goalKey(ev.item_id, ev.name)),
+          installId,
+          KEYS.topShop,
+          goalKey(ev.item_id, ev.name),
+        );
         break;
       case "theme_preset_changed":
         await kv.zincrby(KEYS.themes, 1, ev.preset);
@@ -171,18 +212,25 @@ function weightedMedian(entries: ZSetMember[], valueFromMember: (member: string)
 
 export async function getStatsSnapshot(): Promise<StatsSnapshot> {
   const kv = getKV();
-  const [dau, wau, mau, categoryUsage, projectLevels, projectStreaks, topGoals, topShop, themes, browsers] =
+  const day1 = recentDayBuckets(1);
+  const day7 = recentDayBuckets(7);
+  const day30 = recentDayBuckets(30);
+  const browserKeysByFamily = KNOWN_BROWSERS.map((browser) => ({
+    browser,
+    keys: day30.map((day) => KEYS.browserDaily(browser, day)),
+  }));
+  const [dau, wau, mau, categoryUsage, projectLevels, projectStreaks, topGoals, topShop, themes, browserCounts] =
     await Promise.all([
-      kv.pfcount(KEYS.hllDay),
-      kv.pfcount(KEYS.hllWeek),
-      kv.pfcount(KEYS.hllMonth),
+      kv.pfcount(...day1.map((day) => KEYS.hllDaily(day))),
+      kv.pfcount(...day7.map((day) => KEYS.hllDaily(day))),
+      kv.pfcount(...day30.map((day) => KEYS.hllDaily(day))),
       kv.zrevrange(KEYS.categories, 0, -1, true),
       kv.zrevrange(KEYS.projectLevels, 0, -1, true),
       kv.zrevrange(KEYS.projectStreaks, 0, -1, true),
       kv.zrevrange(KEYS.topGoals, 0, 9, true),
-      kv.zrevrange("mu:t:top:shop", 0, 9, true),
+      kv.zrevrange(KEYS.topShop, 0, 9, true),
       kv.zrevrange(KEYS.themes, 0, -1, true),
-      kv.zrevrange(KEYS.browsers, 0, -1, true),
+      Promise.all(browserKeysByFamily.map(async ({ browser, keys }) => ({ browser, count: await kv.pfcount(...keys) }))),
     ]);
 
   return {
@@ -203,7 +251,7 @@ export async function getStatsSnapshot(): Promise<StatsSnapshot> {
       return { item_id: parsed.goal_id, name: parsed.name, count: entry.score };
     }),
     themes: themes.map((entry) => ({ preset: entry.member, count: entry.score })),
-    browsers: browsers.map((entry) => ({ browser: entry.member, count: entry.score })),
+    browsers: browserCounts.filter((entry) => entry.count > 0),
     generatedAt: Date.now(),
   };
 }

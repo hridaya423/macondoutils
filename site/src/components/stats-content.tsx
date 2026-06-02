@@ -393,7 +393,7 @@ export default function StatsContent({ initialStats, kvConfigured }: Props) {
           value: item.count,
         }))}
         empty="No browser data yet"
-        centerLabel="Batches"
+        centerLabel="30d users"
       />
 
       <DonutChart

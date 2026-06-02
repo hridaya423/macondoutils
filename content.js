@@ -1734,8 +1734,8 @@
 
     const title = String(project.name || fallbackMeta?.title || "").trim();
     const level = Number.isFinite(Number(project.level))
-      ? Math.max(1, Math.round(Number(project.level)))
-      : (Number.isFinite(Number(fallbackMeta?.level)) ? Math.max(1, Math.round(Number(fallbackMeta.level))) : null);
+      ? Math.min(4, Math.max(1, Math.round(Number(project.level))))
+      : (Number.isFinite(Number(fallbackMeta?.level)) ? Math.min(4, Math.max(1, Math.round(Number(fallbackMeta.level)))) : null);
     const streakDays = Number.isFinite(Number(project.project_streak_days))
       ? Math.max(0, Math.round(Number(project.project_streak_days)))
       : Math.max(0, Math.round(Number(fallbackMeta?.streakDays) || 0));
@@ -2254,7 +2254,7 @@
       title,
       hours: 0,
       streakDays: 0,
-      level: Number.isFinite(Number(level)) ? Math.max(1, Math.round(Number(level))) : null,
+      level: Number.isFinite(Number(level)) ? Math.min(4, Math.max(1, Math.round(Number(level)))) : null,
       estCoins: 0,
       totalEarnedGold: 0,
       futureCoins: 0,
@@ -2417,11 +2417,11 @@
 
   function enqueueTelemetry(eventType, payload) {
     const api = getTelemetryApi();
-    if (!api) return false;
+    if (!api) return Promise.resolve(false);
     try {
-      return api.enqueue(eventType, payload || {});
+      return Promise.resolve(api.enqueue(eventType, payload || {}));
     } catch {
-      return false;
+      return Promise.resolve(false);
     }
   }
 
@@ -2448,6 +2448,10 @@
     if (api.setPrefs) {
       api.setPrefs(next).then(() => {
         refreshProjectLabelSettingsPanel();
+        if (key === "enabled" && next.enabled && Object.keys(projectMetaById || {}).length) {
+          recordProjectMetricsSnapshot(projectMetaById).catch(() => {
+          });
+        }
       });
     }
   }
@@ -2554,7 +2558,7 @@
     const streakValues = [];
 
     entries.forEach((meta) => {
-      const level = Number.isFinite(Number(meta.level)) ? Math.max(1, Math.round(Number(meta.level))) : null;
+      const level = Number.isFinite(Number(meta.level)) ? Math.min(4, Math.max(1, Math.round(Number(meta.level)))) : null;
       const streakDays = Number.isFinite(Number(meta.streakDays)) ? Math.max(0, Math.round(Number(meta.streakDays))) : null;
       if (level !== null) {
         levelCounts.set(level, (levelCounts.get(level) || 0) + 1);
@@ -2593,7 +2597,7 @@
     if (previous === serialized) {
       return false;
     }
-    const enqueued = enqueueTelemetry("project_metrics_snapshot", snapshot);
+    const enqueued = await enqueueTelemetry("project_metrics_snapshot", snapshot);
     if (enqueued) {
       localStorage.setItem(PROJECT_METRICS_SNAPSHOT_CACHE_KEY, serialized);
     }
@@ -2657,7 +2661,7 @@
     }
     const hours = Number(metrics.hours);
     const streakDays = Number.isFinite(metrics.streakDays) ? Math.max(0, Math.round(metrics.streakDays)) : 0;
-    const level = Number.isFinite(metrics.level) ? Math.max(1, Math.round(metrics.level)) : null;
+    const level = Number.isFinite(metrics.level) ? Math.min(4, Math.max(1, Math.round(metrics.level))) : null;
     const estCoins = Number.isFinite(metrics.estCoins)
       ? Math.max(0, Math.round(metrics.estCoins))
       : Number.isFinite(metrics.goldPerHour) ? Math.max(0, Math.round(hours * Number(metrics.goldPerHour))) : 0;

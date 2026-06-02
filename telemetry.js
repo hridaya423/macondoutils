@@ -110,6 +110,140 @@
     return Array.from(categories);
   }
 
+  function trimToMax(value, max) {
+    return String(value || "").trim().slice(0, max);
+  }
+
+  function clampInt(value, min, max) {
+    const num = Math.round(Number(value) || 0);
+    return Math.max(min, Math.min(max, num));
+  }
+
+  function clampNumber(value, min, max) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) {
+      return min;
+    }
+    return Math.max(min, Math.min(max, num));
+  }
+
+  function sanitizeBrowser(browser) {
+    return ["chrome", "firefox", "edge", "safari", "opera", "arc", "brave", "other"].includes(browser)
+      ? browser
+      : "other";
+  }
+
+  function sanitizeProjectSnapshot(event) {
+    const projectCount = clampInt(event.project_count, 0, 10000);
+    const medianLevel = clampNumber(event.median_level, 0, 4);
+    const medianStreakDays = clampNumber(event.median_streak_days, 0, 100000);
+    const levelCountsMap = new Map();
+    const streakCountsMap = new Map();
+    for (const entry of Array.isArray(event.level_counts) ? event.level_counts : []) {
+      const level = clampInt(entry?.level, 1, 4);
+      const count = clampInt(entry?.count, 0, 10000);
+      if (count > 0) {
+        levelCountsMap.set(level, (levelCountsMap.get(level) || 0) + count);
+      }
+    }
+    for (const entry of Array.isArray(event.streak_counts) ? event.streak_counts : []) {
+      const streakDays = clampInt(entry?.streak_days, 0, 100000);
+      const count = clampInt(entry?.count, 0, 10000);
+      if (count > 0) {
+        streakCountsMap.set(streakDays, (streakCountsMap.get(streakDays) || 0) + count);
+      }
+    }
+    const levelCounts = Array.from(levelCountsMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, 4)
+      .map(([level, count]) => ({ level, count }));
+    const streakCounts = Array.from(streakCountsMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, 500)
+      .map(([streak_days, count]) => ({ streak_days, count }));
+    if (!levelCounts.length && !streakCounts.length) {
+      return null;
+    }
+    return {
+      type: "project_metrics_snapshot",
+      project_count: projectCount,
+      median_level: medianLevel,
+      median_streak_days: medianStreakDays,
+      level_counts: levelCounts,
+      streak_counts: streakCounts,
+    };
+  }
+
+  function sanitizeEvent(event) {
+    if (!event || typeof event !== "object" || typeof event.type !== "string") {
+      return null;
+    }
+    switch (event.type) {
+      case "session_start": {
+        const path = trimToMax(event.path, 120);
+        return path ? { type: event.type, path } : null;
+      }
+      case "goal_added":
+      case "goal_removed": {
+        const goalId = trimToMax(event.goal_id, 120);
+        const name = trimToMax(event.name, 200);
+        return goalId && name ? { type: event.type, goal_id: goalId, name } : null;
+      }
+      case "goal_qty_changed": {
+        const goalId = trimToMax(event.goal_id, 120);
+        const name = trimToMax(event.name, 200);
+        if (!goalId || !name) return null;
+        return {
+          type: event.type,
+          goal_id: goalId,
+          name,
+          quantity: clampInt(event.quantity, 0, 9999),
+        };
+      }
+      case "shop_card_interact": {
+        const itemId = trimToMax(event.item_id, 120);
+        const name = trimToMax(event.name, 200);
+        if (!itemId || !name) return null;
+        return {
+          type: event.type,
+          item_id: itemId,
+          name,
+          gold: clampInt(event.gold, 0, 1000000000),
+        };
+      }
+      case "project_metrics_snapshot":
+        return sanitizeProjectSnapshot(event);
+      case "theme_preset_changed":
+        return event.preset === "default" || event.preset === "dark"
+          ? { type: event.type, preset: event.preset }
+          : null;
+      case "onboarding_completed": {
+        const flowVersion = trimToMax(event.flow_version, 40);
+        return flowVersion ? { type: event.type, flow_version: flowVersion } : null;
+      }
+      case "error_reported": {
+        const kind = trimToMax(event.kind, 80);
+        const message = trimToMax(event.message, 500);
+        return kind && message ? { type: event.type, kind, message } : null;
+      }
+      default:
+        return null;
+    }
+  }
+
+  function normalizeQueuedEvent(entry) {
+    if (!entry || typeof entry !== "object" || typeof entry.type !== "string") {
+      return null;
+    }
+    if (entry.payload && typeof entry.payload === "object" && !Array.isArray(entry.payload)) {
+      return { type: entry.type, ...entry.payload };
+    }
+    const normalized = { ...entry };
+    delete normalized.ts;
+    delete normalized.payload;
+    return normalized;
+  }
+
   function getStorage() {
     if (global.chrome?.storage?.local) return global.chrome.storage.local;
     if (typeof global.browser !== "undefined" && global.browser?.storage?.local) {
@@ -307,7 +441,12 @@
       if (!att) {
         return;
       }
-      const batch = queue.slice(0, MAX_BATCH);
+      const queuedBatch = queue.slice(0, MAX_BATCH);
+      const batch = queuedBatch.map(normalizeQueuedEvent).map(sanitizeEvent).filter(Boolean);
+      if (batch.length === 0) {
+        await writeQueue(queue.slice(queuedBatch.length));
+        return;
+      }
       const batchCategories = eventCategoriesFromBatch(batch);
       seq += 1;
       const response = await sendMessageToBackground({
@@ -317,7 +456,7 @@
         seq,
         categories: batchCategories,
         events: batch,
-        browser: detectBrowser(),
+        browser: sanitizeBrowser(detectBrowser()),
         baseUrl: resolveBaseUrl(),
       });
       if (response?.ok) {
@@ -326,7 +465,7 @@
           await storageSet(STORAGE_KEYS.baseUrl, cachedBaseUrl);
         }
         await storageSet(STORAGE_KEYS.seq, seq);
-        const remaining = queue.slice(batch.length);
+        const remaining = queue.slice(queuedBatch.length);
         await writeQueue(remaining);
       } else if (response?.code === "invalid_token" || response?.code === "install_mismatch") {
         cachedToken = "";
@@ -365,7 +504,8 @@
     if (!EVENT_CATEGORIES[eventType]) return false;
     if (!eventAllowedByPrefs(eventType)) return false;
     const queue = await readQueue();
-    queue.push({ type: eventType, ts: Date.now(), payload: payload || {} });
+    const safePayload = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+    queue.push({ ...safePayload, type: eventType, ts: Date.now() });
     if (queue.length > MAX_QUEUE) {
       queue.splice(0, queue.length - MAX_QUEUE);
     }
