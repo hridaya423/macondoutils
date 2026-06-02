@@ -3130,6 +3130,18 @@
   }
 
   function ensureProjectLabelSettingsButton() {
+    if (!isDashboardPage()) {
+      const existing = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
+      if (existing) {
+        existing.remove();
+      }
+      const fallback = document.getElementById("macondo-utils-settings-fallback-mount");
+      if (fallback) {
+        fallback.remove();
+      }
+      return;
+    }
+
     let root = document.getElementById(PROJECT_LABEL_SETTINGS_ID);
     let target = document.querySelector(SETTINGS_BUTTON_TARGET_SELECTOR);
     if (!(target instanceof HTMLElement)) {
@@ -4335,6 +4347,11 @@
     return "other";
   }
 
+  function isDashboardPage() {
+    const pathname = String(window.location.pathname || "").replace(/\/+$/, "") || "/";
+    return pathname === "/dashboard";
+  }
+
   function getOnboardingFlow() {
     const flows = {
       "0.1.0": [
@@ -4977,6 +4994,9 @@
   }
 
   function updateDashboardAverageRateRow() {
+    if (!isDashboardPage()) {
+      return;
+    }
     if (!Number.isFinite(effectiveGoldPerHour) || effectiveGoldPerHour <= 0) {
       return;
     }
@@ -5405,6 +5425,15 @@
   }
 
   function renderGoalsMiniBox() {
+    if (!isDashboardPage()) {
+      const existing = document.getElementById("macondo-utils-goals-mini");
+      if (existing) {
+        existing.remove();
+      }
+      lastGoalsMiniSignature = "";
+      return;
+    }
+
     const existing = document.getElementById("macondo-utils-goals-mini");
     if (projectLabelPrefs.showGoalsHud === false || !projectGoals.length) {
       if (existing) {
