@@ -97,6 +97,19 @@
     return "other";
   }
 
+  function eventCategoriesFromBatch(events) {
+    const categories = new Set();
+    for (const event of Array.isArray(events) ? events : []) {
+      const mapped = EVENT_CATEGORIES[event?.type];
+      if (Array.isArray(mapped)) {
+        for (const category of mapped) {
+          categories.add(category);
+        }
+      }
+    }
+    return Array.from(categories);
+  }
+
   function getStorage() {
     if (global.chrome?.storage?.local) return global.chrome.storage.local;
     if (typeof global.browser !== "undefined" && global.browser?.storage?.local) {
@@ -295,16 +308,14 @@
         return;
       }
       const batch = queue.slice(0, MAX_BATCH);
+      const batchCategories = eventCategoriesFromBatch(batch);
       seq += 1;
-      const enabledCategories = Object.keys(EVENT_CATEGORIES).length === 0
-        ? []
-        : ["activity", "goals", "shop", "projects", "theme", "errors"].filter((c) => cachedPrefs[c] === true);
       const response = await sendMessageToBackground({
         type: "muTelemetryEvents",
         installId: await ensureInstallId(),
         token: cachedToken,
         seq,
-        categories: enabledCategories,
+        categories: batchCategories,
         events: batch,
         browser: detectBrowser(),
         baseUrl: resolveBaseUrl(),
