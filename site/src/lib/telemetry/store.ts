@@ -172,6 +172,7 @@ export interface StatsSnapshot {
   activeUsers24h: number;
   activeUsers7d: number;
   activeUsers30d: number;
+  activeUsersDaily: Array<{ day: string; count: number }>;
   categoryUsage: Array<{ category: TelemetryCategory; count: number }>;
   projectLevelMedian: number;
   projectStreakMedian: number;
@@ -214,16 +215,18 @@ export async function getStatsSnapshot(): Promise<StatsSnapshot> {
   const kv = getKV();
   const day1 = recentDayBuckets(1);
   const day7 = recentDayBuckets(7);
+  const day14 = recentDayBuckets(14);
   const day30 = recentDayBuckets(30);
   const browserKeysByFamily = KNOWN_BROWSERS.map((browser) => ({
     browser,
     keys: day30.map((day) => KEYS.browserDaily(browser, day)),
   }));
-  const [dau, wau, mau, categoryUsage, projectLevels, projectStreaks, topGoals, topShop, themes, browserCounts] =
+  const [dau, wau, mau, dailyCounts, categoryUsage, projectLevels, projectStreaks, topGoals, topShop, themes, browserCounts] =
     await Promise.all([
       kv.pfcount(...day1.map((day) => KEYS.hllDaily(day))),
       kv.pfcount(...day7.map((day) => KEYS.hllDaily(day))),
       kv.pfcount(...day30.map((day) => KEYS.hllDaily(day))),
+      Promise.all(day14.map(async (day) => ({ day, count: await kv.pfcount(KEYS.hllDaily(day)) }))),
       kv.zrevrange(KEYS.categories, 0, -1, true),
       kv.zrevrange(KEYS.projectLevels, 0, -1, true),
       kv.zrevrange(KEYS.projectStreaks, 0, -1, true),
@@ -237,6 +240,7 @@ export async function getStatsSnapshot(): Promise<StatsSnapshot> {
     activeUsers24h: dau,
     activeUsers7d: wau,
     activeUsers30d: mau,
+    activeUsersDaily: dailyCounts.reverse(),
     categoryUsage: categoryUsage.map((entry) => ({ category: entry.member as TelemetryCategory, count: entry.score })),
     projectLevelMedian: weightedMedian(projectLevels, (member) => Number(member)),
     projectStreakMedian: weightedMedian(projectStreaks, (member) => Number(member)),

@@ -76,6 +76,77 @@ function prettyBrowser(browser: string): string {
   }
 }
 
+function SparklineCard({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ day: string; count: number }>;
+}) {
+  const safe = items.filter((item) => Number.isFinite(item.count));
+  const max = Math.max(1, ...safe.map((item) => item.count));
+  const width = 320;
+  const height = 88;
+  const padX = 10;
+  const padY = 10;
+  const usableWidth = width - padX * 2;
+  const usableHeight = height - padY * 2;
+  const stepX = safe.length > 1 ? usableWidth / (safe.length - 1) : 0;
+  const points = safe.map((item, index) => {
+    const x = padX + index * stepX;
+    const y = height - padY - (item.count / max) * usableHeight;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return (
+    <div className="rounded-3xl border border-[#E8D9CE] bg-white p-6 shadow-sm md:col-span-3">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#9C6B4E]">
+            {title}
+          </p>
+          <p className="mt-2 text-sm text-[#8A6E59]">
+            Daily unique installs across the last 14 days
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-black tracking-tight text-[#2D1B11]">
+            {safe.length ? formatNumber(safe[safe.length - 1]!.count) : "0"}
+          </div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#9C6B4E]">
+            today
+          </div>
+        </div>
+      </div>
+      {safe.length === 0 ? (
+        <p className="mt-4 text-sm text-[#8A6E59]">No daily activity data yet</p>
+      ) : (
+        <div className="mt-4">
+          <svg viewBox={`0 0 ${width} ${height}`} className="h-24 w-full" role="img" aria-label="Active users sparkline">
+            <polyline
+              fill="none"
+              stroke="#9C6B4E"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              points={points}
+            />
+            {safe.map((item, index) => {
+              const x = padX + index * stepX;
+              const y = height - padY - (item.count / max) * usableHeight;
+              return <circle key={item.day} cx={x} cy={y} r="3" fill="#6F4F2B" />;
+            })}
+          </svg>
+          <div className="mt-2 flex justify-between text-[10px] font-semibold uppercase tracking-[0.1em] text-[#8A6E59]">
+            <span>{safe[0] ? safe[0].day.slice(6, 8) + "-" + safe[0].day.slice(4, 6) : ""}</span>
+            <span>{safe[Math.floor((safe.length - 1) / 2)] ? safe[Math.floor((safe.length - 1) / 2)]!.day.slice(6, 8) + "-" + safe[Math.floor((safe.length - 1) / 2)]!.day.slice(4, 6) : ""}</span>
+            <span>{safe[safe.length - 1] ? safe[safe.length - 1]!.day.slice(6, 8) + "-" + safe[safe.length - 1]!.day.slice(4, 6) : ""}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function bucketStreakDays(items: Array<{ streak_days: number; count: number }>) {
   const buckets = new Map([
     ["0", 0],
@@ -364,6 +435,7 @@ export default function StatsContent({ initialStats, kvConfigured }: Props) {
           value={formatNumber(stats.activeUsers30d)}
           hint="Unique installs in the last 30 days"
         />
+        <SparklineCard title="Activity trend" items={stats.activeUsersDaily} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

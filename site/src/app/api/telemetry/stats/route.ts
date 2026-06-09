@@ -33,6 +33,7 @@ export async function GET(request: Request) {
         activeUsers24h: 0,
         activeUsers7d: 0,
         activeUsers30d: 0,
+        activeUsersDaily: [],
         categoryUsage: [],
         projectLevelMedian: 0,
         projectStreakMedian: 0,

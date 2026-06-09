@@ -6215,6 +6215,54 @@
     });
   }
 
+  function collapseShopFilterChips() {
+    const rows = Array.from(document.querySelectorAll("div")).filter((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const buttons = Array.from(node.children).filter((child) => child instanceof HTMLButtonElement);
+      if (buttons.length < 8) {
+        return false;
+      }
+      const text = buttons.map((button) => String(button.textContent || "").trim().toLowerCase());
+      return text.includes("all") && text.includes("other") && (text.includes("tech") || text.includes("food") || text.includes("gaming"));
+    });
+    rows.forEach((row) => {
+      const buttons = Array.from(row.children).filter((child) => child instanceof HTMLButtonElement);
+      const existingToggle = row.querySelector("[data-mu-chip-toggle='true']");
+      if (existingToggle instanceof HTMLElement) {
+        existingToggle.remove();
+      }
+      buttons.forEach((button) => {
+        if (button instanceof HTMLElement) {
+          button.style.removeProperty("display");
+        }
+      });
+      const visibleCount = 8;
+      if (buttons.length <= visibleCount) {
+        return;
+      }
+      const expanded = row.getAttribute("data-mu-chip-expanded") === "true";
+      buttons.forEach((button, index) => {
+        if (index >= visibleCount && !expanded) {
+          button.style.setProperty("display", "none", "important");
+        }
+      });
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.setAttribute("data-mu-chip-toggle", "true");
+      toggle.textContent = expanded ? "Less" : "...";
+      toggle.className = buttons[0].className;
+      toggle.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        row.setAttribute("data-mu-chip-expanded", expanded ? "false" : "true");
+        collapseShopFilterChips();
+      });
+      row.appendChild(toggle);
+    });
+  }
+
   const observer = new MutationObserver((records) => {
     if (suppressedObserverMutations > 0) {
       return;
@@ -6225,6 +6273,7 @@
     const work = summarizeMutationWork(records);
     if (work.shop) {
       scheduleRender();
+      collapseShopFilterChips();
     }
     if (work.project) {
       queueProjectGroundLabelsSync();
@@ -6336,6 +6385,7 @@
   });
 
   updateShopCardHours();
+  collapseShopFilterChips();
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
   ensureStreakHoverInteraction();
