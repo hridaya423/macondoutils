@@ -95,9 +95,10 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-2xl font-bold text-[#2D1B11]">Permissions</h2>
             <p className="mt-3">
-              Macondo Utils currently requests limited browser permissions only as needed to run on the Macondo
-              site and support its features. The telemetry endpoint lives on this site&apos;s domain and is only
-              contacted when you opt in.
+              Macondo Utils requests `storage` to save extension preferences, opt-in telemetry settings, and small
+              pieces of local state such as onboarding progress and saved goal items. It requests `tabs` only to
+              identify the active Macondo tab so the extension can apply its UI and quality-of-life features on the
+              correct page. The telemetry endpoint lives on this site&apos;s domain and is only contacted when you opt in.
             </p>
           </section>
 
