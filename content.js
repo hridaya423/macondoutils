@@ -102,6 +102,7 @@
   let streakHoverDataPromise = null;
   let streakHoverData = null;
   let streakHoverDataCacheKey = "";
+  const nativeGoalsHtmlCache = new WeakMap();
   let lastFarmThemeDebugSignature = "";
   let farmThemeRefreshQueued = false;
   let farmThemeRefreshToken = 0;
@@ -5314,6 +5315,43 @@
     return null;
   }
 
+  function findNativeWishlistRoot() {
+    const modal = getShopModalElement();
+    if (!(modal instanceof HTMLElement)) {
+      return null;
+    }
+    const candidates = Array.from(modal.querySelectorAll("div")).filter((node) => {
+      if (!(node instanceof HTMLElement) || node.id === "macondo-utils-goals-mini") {
+        return false;
+      }
+      const text = String(node.textContent || "").toLowerCase();
+      return text.includes("your wishlist")
+        && text.includes("total cost")
+        && (node.querySelector("button[aria-label*='Increase quantity']") || node.querySelector("button[aria-label*='Remove from wishlist']"));
+    });
+    candidates.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return ar.width * ar.height - br.width * br.height;
+    });
+    return candidates[0] || null;
+  }
+
+  function restoreNativeWishlistIfNeeded() {
+    const root = findNativeWishlistRoot();
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    const originalHtml = nativeGoalsHtmlCache.get(root);
+    if (typeof originalHtml === "string") {
+      withObserverSuppressed(() => {
+        root.innerHTML = originalHtml;
+        root.removeAttribute("data-mu-goals-patched");
+      });
+      nativeGoalsHtmlCache.delete(root);
+    }
+  }
+
   function findDashboardAverageRateRow() {
     return Array.from(document.querySelectorAll("div")).find((node) => {
       if (!(node instanceof HTMLElement)) {
@@ -5772,11 +5810,13 @@
   }
 
   function renderGoalsMiniBox() {
-    if (!isDashboardPage() && !isShopModalOpen()) {
+    const nativeWishlistRoot = isShopModalOpen() ? findNativeWishlistRoot() : null;
+    if (!isDashboardPage() && !nativeWishlistRoot) {
       const existing = document.getElementById("macondo-utils-goals-mini");
       if (existing) {
         existing.remove();
       }
+      restoreNativeWishlistIfNeeded();
       lastGoalsMiniSignature = "";
       return;
     }
@@ -5786,39 +5826,61 @@
       if (existing) {
         existing.remove();
       }
+      restoreNativeWishlistIfNeeded();
       lastGoalsMiniSignature = "";
       return;
     }
-    const mountInfo = findGoalsHudMount();
-    if (!mountInfo?.mount) {
-      return;
-    }
-    const { mount, afterNode, mode } = mountInfo;
-    let box = existing;
-    if (!box) {
-      withObserverSuppressed(() => {
-        box = document.createElement("div");
-        box.id = "macondo-utils-goals-mini";
-        box.className = "mu-goals-mini";
-        if (afterNode && afterNode.parentElement === mount) {
+    let box = nativeWishlistRoot;
+    let mode = "native-wishlist";
+    if (nativeWishlistRoot) {
+      if (existing && existing !== nativeWishlistRoot) {
+        existing.remove();
+      }
+      if (!nativeGoalsHtmlCache.has(nativeWishlistRoot)) {
+        nativeGoalsHtmlCache.set(nativeWishlistRoot, nativeWishlistRoot.innerHTML);
+      }
+      nativeWishlistRoot.setAttribute("data-mu-goals-patched", "true");
+    } else {
+      const mountInfo = findGoalsHudMount();
+      if (!mountInfo?.mount) {
+        return;
+      }
+      const { mount, afterNode, mode: mountMode } = mountInfo;
+      mode = mountMode;
+      box = existing;
+      if (!box) {
+        withObserverSuppressed(() => {
+          box = document.createElement("div");
+          box.id = "macondo-utils-goals-mini";
+          box.className = "mu-goals-native-shell";
+          if (afterNode && afterNode.parentElement === mount) {
+            afterNode.insertAdjacentElement("afterend", box);
+          } else {
+            mount.appendChild(box);
+          }
+        });
+      } else if (afterNode && box.previousElementSibling !== afterNode) {
+        withObserverSuppressed(() => {
           afterNode.insertAdjacentElement("afterend", box);
-        } else {
+        });
+      } else if (box.parentElement !== mount) {
+        withObserverSuppressed(() => {
           mount.appendChild(box);
-        }
-      });
-    } else if (afterNode && box.previousElementSibling !== afterNode) {
-      withObserverSuppressed(() => {
-        afterNode.insertAdjacentElement("afterend", box);
-      });
-    } else if (box.parentElement !== mount) {
-      withObserverSuppressed(() => {
-        mount.appendChild(box);
-      });
+        });
+      }
+      if (box.getAttribute("data-mode") !== mode) {
+        withObserverSuppressed(() => {
+          box.setAttribute("data-mode", mode);
+        });
+      }
+      if (box.className !== "mu-goals-native-shell") {
+        withObserverSuppressed(() => {
+          box.className = "mu-goals-native-shell";
+        });
+      }
     }
-    if (box.getAttribute("data-mode") !== mode) {
-      withObserverSuppressed(() => {
-        box.setAttribute("data-mode", mode);
-      });
+    if (!(box instanceof HTMLElement)) {
+      return;
     }
 
     const currentGold = parseCurrentGoldFromHeader();
@@ -5840,6 +5902,13 @@
       : 0;
     const projectedSegmentPct = Math.max(0, totalProgressPct - actualProgressPct);
     const totalEta = formatEtaHours(rate > 0 ? totalRemainingGold / rate : 0);
+    const moneyIcon = `<img src="/images/icons/money.webp" class="w-3.5 h-3.5 object-contain" alt="">`;
+    const clockIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>`;
+    const starIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 fill-ds-brown text-ds-brown shrink-0" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg>`;
+    const gripIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0 text-ds-brown/35 cursor-grab active:cursor-grabbing" title="Drag to reorder"><circle cx="9" cy="12" r="1"></circle><circle cx="9" cy="5" r="1"></circle><circle cx="9" cy="19" r="1"></circle><circle cx="15" cy="12" r="1"></circle><circle cx="15" cy="5" r="1"></circle><circle cx="15" cy="19" r="1"></circle></svg>`;
+    const closeIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>`;
+    const plusIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>`;
+    const minusIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3" aria-hidden="true"><path d="M5 12h14"></path></svg>`;
 
     let cumulativeTargetGold = 0;
     const rows = sorted.slice(0, 6).map((goal) => {
@@ -5855,56 +5924,76 @@
       const pct = targetGold > 0 ? Math.max(0, Math.min(100, Math.round((progressGold / targetGold) * 100))) : 0;
       const etaRemainingGold = goalsProgressMode === "cumulative" ? cumulativeRemainingGold : rowRemainingGold;
       const hours = formatEtaHours(rate > 0 ? etaRemainingGold / rate : 0);
-      const progressLabel = `${progressGold}/${targetGold} gold`;
-      const thumb = goal.imageUrl ? `<img class='mu-goal-mini-thumb' src='${escapeHtml(goal.imageUrl)}' alt='${escapeHtml(goal.name)}' />` : "";
+      const thumb = goal.imageUrl
+        ? `<img src='${escapeHtml(goal.imageUrl)}' alt='${escapeHtml(goal.name)}' class='w-full h-full object-contain p-1' draggable='false'>`
+        : "";
       return `
-        <div class='mu-goal-mini-pill' draggable='true' data-goal-drag-id='${escapeHtml(goal.id)}'>
-          <div class='mu-goal-mini-item-main'>
-            <span class='mu-goal-mini-handle' aria-hidden='true'>::</span>
-            ${thumb}
-            <div class='mu-goal-mini-item-text'>
-              <div class='mu-goal-mini-name'>${escapeHtml(goal.name)}</div>
-              <div class='mu-goal-mini-sub'>${progressLabel} • ${hours}</div>
+        <div class='mu-goals-card flex flex-col gap-2 border-[2px] border-ds-brown/20 bg-white/45 p-2.5 transition-opacity' draggable='true' data-goal-drag-id='${escapeHtml(goal.id)}'>
+          <div class='flex items-start gap-2'>
+            ${gripIcon}
+            <div class='w-10 h-10 shrink-0 bg-[#ecd2ae] flex items-center justify-center overflow-hidden'>${thumb}</div>
+            <div class='flex-1 min-w-0'>
+              <div class='flex items-start justify-between gap-1'>
+                <span class='mu-goals-card-name font-bold text-ds-brown text-sm leading-tight' style='display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;'>${escapeHtml(goal.name)}</span>
+                <button type='button' class='-mt-0.5 -mr-0.5 shrink-0 p-0.5 text-ds-brown/50 hover:text-ds-danger transition-colors' data-goal-remove='${escapeHtml(goal.id)}' aria-label='Remove from wishlist'>${closeIcon}</button>
+              </div>
+              <span class='mt-0.5 flex items-center gap-1 text-xs font-bold text-ds-brown'>${moneyIcon} ${targetGold}</span>
             </div>
           </div>
-          <div class='mu-goal-mini-controls'>
-            <div class='mu-goal-mini-pct-chip'>${pct}%</div>
-            <button type='button' class='mu-goal-mini-btn' data-goal-qty-adjust='-1' data-goal-id='${escapeHtml(goal.id)}'>-</button>
-            <span class='mu-goal-mini-qty'>x${goal.quantity}</span>
-            <button type='button' class='mu-goal-mini-btn' data-goal-qty-adjust='1' data-goal-id='${escapeHtml(goal.id)}'>+</button>
-            <button type='button' class='mu-goal-mini-btn remove' data-goal-remove='${escapeHtml(goal.id)}' aria-label='Remove goal' title='Remove goal'>×</button>
+          <div class='h-2 bg-ds-brown/15 overflow-hidden'><div class='h-full transition-[width] duration-500 bg-ds-brown' style='width:${pct}%;'></div></div>
+          <div class='flex items-center justify-between gap-2'>
+            <span class='flex items-center gap-1 min-w-0 truncate text-[11px] font-bold text-ds-brown/60'>${clockIcon} ${hours} in order</span>
+            <div class='flex items-center gap-1 shrink-0'>
+              <button type='button' class='p-1 border-[2px] border-ds-brown/25 text-ds-brown hover:bg-ds-brown/10 disabled:opacity-40' data-goal-qty-adjust='-1' data-goal-id='${escapeHtml(goal.id)}' ${goal.quantity <= 1 ? "disabled" : ""} aria-label='Decrease quantity'>${minusIcon}</button>
+              <span class='min-w-[1.5rem] text-center text-xs font-bold text-ds-brown'>${goal.quantity}</span>
+              <button type='button' class='p-1 border-[2px] border-ds-brown/25 text-ds-brown hover:bg-ds-brown/10' data-goal-qty-adjust='1' data-goal-id='${escapeHtml(goal.id)}' aria-label='Increase quantity'>${plusIcon}</button>
+            </div>
           </div>
         </div>
       `;
     }).join("");
-    const statsMarkup = [
-      projectLabelPrefs.showHudGoalsStat !== false ? `<div class='mu-goals-mini-stat'><span>Goals</span><strong>${sorted.length}</strong></div>` : "",
-      projectLabelPrefs.showHudProgressStat !== false ? `<div class='mu-goals-mini-stat'><span>Progress</span><strong>${totalProgressGold}/${totalTargetGold}</strong></div>` : "",
-      projectLabelPrefs.showHudRemainingStat !== false ? `<div class='mu-goals-mini-stat'><span>Remaining</span><strong>${totalRemainingGold}</strong></div>` : "",
-      projectLabelPrefs.showHudEtaStat !== false ? `<div class='mu-goals-mini-stat'><span>ETA</span><strong>${totalEta}</strong></div>` : ""
-    ].filter(Boolean).join("");
-    const nextMarkup = `
-      <div class='mu-goals-mini-title-row'>
-        <div class='mu-goals-mini-title'>Goals</div>
-        <div class='mu-goals-mini-pct'>${totalProgressPct}%</div>
-      </div>
-      <div class='mu-goals-mini-controls-row'>
-        <div class='mu-goals-mini-mode'>
-          <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "actual" ? " active" : ""}' data-goals-mode='actual'>Actual</button>
-          <button type='button' class='mu-goals-mini-mode-btn${goalsViewMode === "projected" ? " active" : ""}' data-goals-mode='projected'>Projected</button>
+    const innerMarkup = `
+        <div class='flex items-center justify-between gap-3 flex-wrap'>
+          <div class='flex items-center gap-2'>
+            ${starIcon}
+            <span class='text-lg font-bold text-ds-brown'>Your wishlist</span>
+            <span class='text-xs font-bold text-ds-brown/55 uppercase tracking-wide'>${sorted.length} starred</span>
+          </div>
+          <div class='text-lg font-bold text-ds-brown'>${totalProgressPct}%</div>
         </div>
-        <div class='mu-goals-mini-mode mu-goals-mini-mode-secondary'>
-          <button type='button' class='mu-goals-mini-mode-btn${goalsProgressMode === "cumulative" ? " active" : ""}' data-goal-progress-mode='cumulative'>Cumulative</button>
-          <button type='button' class='mu-goals-mini-mode-btn${goalsProgressMode === "individual" ? " active" : ""}' data-goal-progress-mode='individual'>Individual</button>
+        <div class='mt-3 flex items-center justify-between gap-3 flex-wrap'>
+          <div class='flex items-center border-[2px] border-ds-brown/30'>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "actual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='actual'>Actual</button>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "projected" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='projected'>Projected</button>
+          </div>
+          <div class='flex items-center border-[2px] border-ds-brown/30'>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsProgressMode === "cumulative" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goal-progress-mode='cumulative'>All together</button>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsProgressMode === "individual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goal-progress-mode='individual'>Per item</button>
+          </div>
         </div>
-      </div>
-      <div class='mu-goals-mini-progress' role='progressbar' aria-valuemin='0' aria-valuemax='${Math.max(1, totalTargetGold)}' aria-valuenow='${boundedProgressGold}' aria-label='Goals progress'>
-        <span class='mu-goals-mini-progress-actual' style='width:${actualProgressPct}%;'></span>
-        <span class='mu-goals-mini-progress-projected${goalsViewMode === "projected" ? " active" : ""}' style='left:${actualProgressPct}%;width:${projectedSegmentPct}%;'></span>
-      </div>
-      ${statsMarkup ? `<div class='mu-goals-mini-stats'>${statsMarkup}</div>` : ""}
-      <div class='mu-goals-mini-list'>${rows}</div>
+        <div class='mt-4'>
+          <div class='mu-goals-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mu-goals-mini-list' data-goals-list>
+            ${rows}
+          </div>
+          <div class='mt-3 border-[2px] border-ds-brown/25 bg-ds-brown/5 p-3 flex flex-col gap-2'>
+            <div class='flex items-center justify-between text-sm font-bold text-ds-brown'>
+              <span>Total cost</span>
+              <span class='flex items-center gap-1'>${moneyIcon} ${totalTargetGold}</span>
+            </div>
+            <div class='overflow-hidden' style='position:relative; height:10px; background:rgba(111, 79, 43, 0.14); border:1px solid rgba(111, 79, 43, 0.16);'>
+              <div class='transition-[width] duration-500' style='height:100%; width:${actualProgressPct}%; background:rgba(111, 79, 43, 0.42);'></div>
+              <div class='transition-[width,left] duration-500' style='position:absolute; top:0; bottom:0; left:${actualProgressPct}%; width:${projectedSegmentPct}%; background:${goalsViewMode === "projected" ? "rgb(111, 79, 43)" : "transparent"};'></div>
+            </div>
+            <div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-bold text-ds-brown/65'>
+              ${projectLabelPrefs.showHudGoalsStat !== false ? `<div>Goals: ${sorted.length}</div>` : ""}
+              ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${totalProgressGold}/${totalTargetGold}</div>` : ""}
+              ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${totalRemainingGold}</div>` : ""}
+              ${projectLabelPrefs.showHudEtaStat !== false ? `<div>ETA: ${totalEta}</div>` : ""}
+            </div>
+          </div>
+        </div>
     `;
+    const nextMarkup = innerMarkup;
     const nextSignature = JSON.stringify({
       mode,
       goalsViewMode,
@@ -5923,13 +6012,21 @@
       totalTargetGold,
       totalRemainingGold,
       totalEta,
-      statsMarkup,
       rows
     });
 
-    if (lastGoalsMiniSignature !== nextSignature || box.innerHTML !== nextMarkup) {
+    const currentPatchedSignature = nativeWishlistRoot
+      ? String(box.getAttribute("data-mu-goals-signature") || "")
+      : "";
+    const shouldRewrite = nativeWishlistRoot
+      ? currentPatchedSignature !== nextSignature
+      : (lastGoalsMiniSignature !== nextSignature || box.innerHTML !== nextMarkup);
+    if (shouldRewrite) {
       withObserverSuppressed(() => {
         box.innerHTML = nextMarkup;
+        if (nativeWishlistRoot) {
+          box.setAttribute("data-mu-goals-signature", nextSignature);
+        }
       });
       lastGoalsMiniSignature = nextSignature;
     }
@@ -6242,7 +6339,6 @@
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
   ensureStreakHoverInteraction();
-  hideNativeStreakHover();
   queueGoalsMiniRender();
   queueOnboardingRender();
   refreshProjectLabelMeta();
@@ -6264,9 +6360,6 @@
   setInterval(() => {
     refreshProjectLabelMeta();
   }, PROJECT_LABEL_META_REFRESH_MS);
-  setInterval(() => {
-    hideNativeStreakHover();
-  }, 1000);
   setInterval(() => {
     refreshGoalOrderStatus();
   }, PROJECT_GOALS_ORDER_SYNC_MS);

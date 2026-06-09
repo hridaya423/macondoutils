@@ -886,6 +886,50 @@
   font-weight: 900;
 }
 
+#macondo-utils-goals-mini.mu-goals-native-shell {
+  position: relative;
+  margin: 12px 8px 0 auto;
+  width: min(680px, calc(100vw - 32px));
+  z-index: 10;
+  pointer-events: auto;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell * {
+  pointer-events: auto;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell:not([data-mode='currency-row']) {
+  border: 2px solid rgba(111, 79, 43, 0.22);
+  background: rgba(234, 207, 179, 0.94);
+  box-shadow: 0 8px 18px rgba(58, 37, 15, 0.08);
+  padding: 12px;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell:not([data-mode='currency-row']) .mu-goals-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell:not([data-mode='currency-row']) .mu-goals-card {
+  min-width: 0;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell:not([data-mode='currency-row']) .mu-goals-card-name {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell[data-mode='currency-row'] {
+  margin: 18px 0 0;
+  width: 100%;
+  max-width: 100%;
+}
+
 #macondo-utils-goals-mini.mu-goals-mini {
   position: relative;
   margin: 12px 8px 0 auto;
