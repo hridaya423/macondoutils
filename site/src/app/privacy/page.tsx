@@ -11,7 +11,7 @@ export default function PrivacyPage() {
       <div className="mx-auto max-w-3xl">
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#9C6B4E]">Macondo Utils</p>
         <h1 className="mt-4 text-4xl font-black tracking-tight md:text-5xl">Privacy Policy</h1>
-        <p className="mt-4 text-sm text-[#8A6E59]">Last updated: June 2, 2026</p>
+        <p className="mt-4 text-sm text-[#8A6E59]">Last updated: 02-06-26</p>
 
         <div className="mt-10 space-y-8 text-base leading-7 text-[#5B4638]">
           <section>

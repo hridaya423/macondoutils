@@ -27,6 +27,15 @@ function formatNumber(n: number): string {
   return String(n);
 }
 
+function formatDateDdMmYy(dateLike: number | string | Date): string {
+  const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  if (Number.isNaN(date.getTime())) return "";
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = String(date.getFullYear()).slice(-2);
+  return `${day}-${month}-${year}`;
+}
+
 function prettyCategory(category: string): string {
   switch (category) {
     case "activity":
@@ -335,7 +344,7 @@ export default function StatsContent({ initialStats, kvConfigured }: Props) {
           {refreshing ? "Refreshing…" : "Live"}
         </p>
         <p className="text-xs text-[#8A6E59]">
-          Updated {new Date(stats.generatedAt).toLocaleTimeString()}
+          Updated {formatDateDdMmYy(stats.generatedAt)}
         </p>
       </div>
 

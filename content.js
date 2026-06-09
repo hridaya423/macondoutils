@@ -101,6 +101,7 @@
   let streakHoverCardHideTimer = null;
   let streakHoverDataPromise = null;
   let streakHoverData = null;
+  let streakHoverDataCacheKey = "";
   let lastFarmThemeDebugSignature = "";
   let farmThemeRefreshQueued = false;
   let farmThemeRefreshToken = 0;
@@ -1675,6 +1676,24 @@
     return streakMatch ? Number.parseInt(streakMatch[1], 10) : 0;
   }
 
+  function getLocalDateKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function formatDateDdMmYy(dateLike) {
+    const raw = dateLike instanceof Date ? dateLike : new Date(dateLike);
+    if (!(raw instanceof Date) || Number.isNaN(raw.getTime())) {
+      return "";
+    }
+    const day = String(raw.getDate()).padStart(2, "0");
+    const month = String(raw.getMonth() + 1).padStart(2, "0");
+    const year = String(raw.getFullYear()).slice(-2);
+    return `${day}-${month}-${year}`;
+  }
+
   function getStreakMultiplier(streakDays) {
     const normalizedDays = Number.isFinite(Number(streakDays)) ? Math.max(0, Math.round(Number(streakDays))) : 0;
     return 1 + (normalizedDays / 100);
@@ -1766,7 +1785,7 @@
   function buildStreakHoverData(profileStreaks, streakCalendar) {
     const safeProfile = profileStreaks && typeof profileStreaks === "object" ? profileStreaks : {};
     const safeCalendar = streakCalendar && typeof streakCalendar === "object" ? streakCalendar : {};
-    const todayIso = new Date().toISOString().slice(0, 10);
+    const todayIso = getLocalDateKey();
     const calendarDays = Array.isArray(safeCalendar.days)
       ? safeCalendar.days.map((day) => ({
           date: String(day?.day || "").trim(),
@@ -1919,9 +1938,9 @@
       try {
         const [year, month, day] = String(dateStr).split("-").map((part) => Number(part));
         const date = new Date(year, (month || 1) - 1, day || 1);
-        return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        return formatDateDdMmYy(date);
       } catch (_err) {
-        return String(dateStr).slice(5);
+        return String(dateStr);
       }
     }
 
@@ -1977,11 +1996,76 @@
     `;
   }
 
+  function buildRecentActivityBars(recentDays, palette = getStreakThemePalette()) {
+    const days = Array.isArray(recentDays) ? recentDays.slice(-14) : [];
+    if (!days.length) {
+      return "";
+    }
+    const maxMinutes = Math.max(60, ...days.map((day) => Math.max(0, Number(day?.minutes) || 0)));
+    const midMinutes = Math.round(maxMinutes / 2);
+    const firstDate = formatDateDdMmYy(days[0]?.date || "");
+    const middleDate = formatDateDdMmYy(days[Math.floor((days.length - 1) / 2)]?.date || "");
+    const lastDate = formatDateDdMmYy(days[days.length - 1]?.date || "");
+    const bars = days.map((day) => {
+      const minutes = Math.max(0, Number(day?.minutes) || 0);
+      const ratio = Math.max(0.12, Math.min(1, minutes / maxMinutes));
+      const status = String(day?.status || "pending");
+      const tooltip = escapeHtml(`${day?.date || ""}: ${minutes}m`);
+      const fill = status === "active"
+        ? palette.active
+        : status === "frozen"
+          ? palette.frozen
+          : status === "review_protected" || status === "review"
+            ? palette.review
+            : status === "partial"
+              ? palette.partial
+              : palette.inactive;
+      return `<div style="flex:1 1 0; display:flex; align-items:flex-end; justify-content:center; min-width:0; cursor:help;" title="${tooltip}"><div style="width:100%; max-width:18px; height:${Math.round(ratio * 84)}px; background:${fill}; border:1px solid ${palette.activeStroke}; box-sizing:border-box;"></div></div>`;
+    }).join("");
+    return `
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="font-size:11px; line-height:1rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:${palette.subtext};">Last 14 days</div>
+        <div style="display:grid; grid-template-columns:32px 1fr; column-gap:8px; align-items:stretch;">
+          <div style="display:flex; flex-direction:column; justify-content:space-between; align-items:flex-end; font-size:9px; line-height:1; font-weight:800; color:${palette.muted}; padding:0 0 18px;">
+            <span>${escapeHtml(formatHours(maxMinutes / 60))}</span>
+            <span>${escapeHtml(formatHours(midMinutes / 60))}</span>
+            <span>0m</span>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <div style="position:relative; display:flex; align-items:flex-end; gap:4px; height:88px; padding:2px 0 0; border-left:1px solid ${palette.chartAxis}; border-bottom:1px solid ${palette.chartAxis};">${bars}</div>
+            <div style="display:flex; justify-content:space-between; font-size:9px; line-height:1; font-weight:800; color:${palette.muted}; padding-left:2px;">
+              <span>${escapeHtml(firstDate)}</span>
+              <span>${escapeHtml(middleDate)}</span>
+              <span>${escapeHtml(lastDate)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function getDashboardStreakButton() {
     return Array.from(document.querySelectorAll("button[title], button[aria-label]")).find((button) => {
       const text = `${button.getAttribute("title") || ""} ${button.getAttribute("aria-label") || ""}`;
       return /streak/i.test(text) && button.querySelector("svg");
     }) || null;
+  }
+
+  function hideNativeStreakHover() {
+    Array.from(document.querySelectorAll("div, button")).forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      const text = String(node.textContent || "").toLowerCase();
+      if (!text.includes("last 14 days") || !text.includes("view streak details")) {
+        return;
+      }
+      const nativeHover = node.closest("[class*='absolute'][class*='top-full'][class*='left-0'][class*='z-50']") || node;
+      if (nativeHover instanceof HTMLElement) {
+        nativeHover.style.setProperty("display", "none", "important");
+        nativeHover.setAttribute("data-mu-hidden-native-streak-hover", "true");
+      }
+    });
   }
 
   function ensureStreakHoverCard() {
@@ -2042,7 +2126,7 @@
       ? Math.round(recentDays.reduce((sum, day) => sum + (Number(day?.minutes) || 0), 0) / recentDays.length)
       : 0;
     const todayMinutes = Math.max(0, Math.round(Number(data?.todayMinutes) || 0));
-    const sparkline = buildRecentActivitySparkline(recentDays, palette);
+    const activityBars = buildRecentActivityBars(recentDays, palette);
     const flameIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px;flex-shrink:0;color:${palette.active};" aria-hidden="true"><path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0c0-2-1.5-3-1.5-5q0-2 2.5-4"></path></svg>`;
     const freezeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;flex-shrink:0;color:${palette.freezeText};" aria-hidden="true"><path d="m10 20-1.25-2.5L6 18"></path><path d="M10 4 8.75 6.5 6 6"></path><path d="m14 20 1.25-2.5L18 18"></path><path d="m14 4 1.25 2.5L18 6"></path><path d="m17 21-3-6h-4"></path><path d="m17 3-3 6 1.5 3"></path><path d="M2 12h6.5L10 9"></path><path d="m20 10-1.5 2 1.5 2"></path><path d="M22 12h-6.5L14 15"></path><path d="m4 10 1.5 2L4 14"></path><path d="m7 21 3-6-1.5-3"></path><path d="m7 3 3 6h4"></path></svg>`;
     card.innerHTML = items.length || streakFreezesRemaining > 0
@@ -2068,18 +2152,9 @@
               </div>
             </div>
           </div>
-          ${sparkline ? `
+          ${activityBars ? `
             <div style="display:flex; flex-direction:column; gap:8px; padding-bottom:12px; border-bottom:2px solid ${palette.rule};">
-              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-                <div style="font-size:11px; line-height:1rem; font-weight:800; text-transform:uppercase; letter-spacing:0.06em; color:${palette.subtext};">Recent activity</div>
-                <div style="font-size:10px; line-height:1rem; color:${palette.muted}; font-weight:700;">last 14 days</div>
-              </div>
-              <div style="padding:2px 0 0;">${sparkline}</div>
-              <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:10px; color:${palette.muted}; font-weight:700;">
-                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:${palette.active}; border:1px solid ${palette.activeStroke};"></span>Active</span>
-                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:${palette.frozen}; border:1px solid ${palette.frozenStroke};"></span>Frozen</span>
-                <span style="display:inline-flex; align-items:center; gap:5px;"><span style="width:10px; height:10px; background:${palette.partial}; border:1px solid ${palette.partialStroke};"></span>Below target</span>
-              </div>
+              ${activityBars}
             </div>
           ` : ""}
           <div style="display:flex; flex-direction:column; gap:6px;">
@@ -2119,16 +2194,17 @@
   }
 
   async function getStreakHoverData() {
-    if (streakHoverData && typeof streakHoverData === "object") {
+    const now = new Date();
+    const currentMonth = formatYearMonth(getYearMonthParts(now));
+    const previousMonth = formatYearMonth(getPreviousYearMonth(getYearMonthParts(now)));
+    const cacheKey = `${currentMonth}|${previousMonth}|${getLocalDateKey(now)}`;
+    if (streakHoverData && typeof streakHoverData === "object" && streakHoverDataCacheKey === cacheKey) {
       return streakHoverData;
     }
     if (streakHoverDataPromise) {
       return streakHoverDataPromise;
     }
     streakHoverDataPromise = (async () => {
-      const now = new Date();
-      const currentMonth = formatYearMonth(getYearMonthParts(now));
-      const previousMonth = formatYearMonth(getPreviousYearMonth(getYearMonthParts(now)));
       const [profileStreaks, currentCalendar, previousCalendar] = await Promise.all([
         fetchProfileStreaks(),
         fetchStreakCalendar(currentMonth),
@@ -2136,6 +2212,7 @@
       ]);
       const parsed = buildStreakHoverData(profileStreaks, mergeStreakCalendars([previousCalendar, currentCalendar]));
       streakHoverData = parsed;
+      streakHoverDataCacheKey = cacheKey;
       return parsed;
     })();
     try {
@@ -2152,6 +2229,7 @@
     }
     button.dataset.muStreakHoverBound = "true";
     button.style.cursor = "default";
+    hideNativeStreakHover();
     getStreakHoverData().then((data) => renderDashboardStreakProgress(data, button)).catch(() => {});
     button.addEventListener("mouseenter", async () => {
       if (streakHoverCardHideTimer) {
@@ -6164,6 +6242,7 @@
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
   ensureStreakHoverInteraction();
+  hideNativeStreakHover();
   queueGoalsMiniRender();
   queueOnboardingRender();
   refreshProjectLabelMeta();
@@ -6185,6 +6264,9 @@
   setInterval(() => {
     refreshProjectLabelMeta();
   }, PROJECT_LABEL_META_REFRESH_MS);
+  setInterval(() => {
+    hideNativeStreakHover();
+  }, 1000);
   setInterval(() => {
     refreshGoalOrderStatus();
   }, PROJECT_GOALS_ORDER_SYNC_MS);

@@ -50,6 +50,7 @@ jobs:
           cp manifest.json temp-chrome-extension/manifest.json
           cp content.js temp-chrome-extension/
           cp background.js temp-chrome-extension/
+          cp telemetry.js temp-chrome-extension/
           cp styles.css temp-chrome-extension/
           cp catpuccin.css temp-chrome-extension/
           cp -r assets temp-chrome-extension/assets
@@ -66,6 +67,7 @@ jobs:
           cp manifest_firefox.json temp-firefox-extension/manifest.json
           cp content.js temp-firefox-extension/
           cp background.js temp-firefox-extension/
+          cp telemetry.js temp-firefox-extension/
           cp styles.css temp-firefox-extension/
           cp catpuccin.css temp-firefox-extension/
           cp -r assets temp-firefox-extension/assets
