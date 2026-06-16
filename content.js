@@ -22,7 +22,9 @@
   const PROJECT_GOALS_CACHE_KEY = "macondo_utils_project_goals";
   const PROJECT_GOALS_ORDER_SYNC_CACHE_KEY = "macondo_utils_project_goals_order_sync";
   const PROJECT_METRICS_SNAPSHOT_CACHE_KEY = "macondo_utils_project_metrics_snapshot";
+  const HACKATIME_PROJECTS_CACHE_KEY = "macondo_utils_hackatime_projects";
   const PROJECT_RATE_CACHE_TTL_MS = 2 * 60 * 1000;
+  const HACKATIME_PROJECTS_CACHE_TTL_MS = 30 * 60 * 1000;
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
@@ -66,6 +68,8 @@
   const PROJECT_LABEL_LAYER_ID = "macondo-utils-project-label-layer";
   const PROJECT_LABEL_SETTINGS_ID = "macondo-utils-project-label-settings";
   const STREAK_HOVER_CARD_ID = "macondo-utils-streak-hover-card";
+  const GOALS_HUD_ID = "macondo-utils-goals-mini";
+  const GOALS_NATIVE_EXTRA_ID = "macondo-utils-goals-native-extra";
   const ONBOARDING_STATE_KEY = "macondo_utils_onboarding_state";
   const ONBOARDING_ROOT_ID = "macondo-utils-onboarding";
   const ONBOARDING_VERSION = typeof chrome !== "undefined" && chrome.runtime?.getManifest
@@ -92,6 +96,7 @@
   let lastGoalOrderSyncAt = 0;
   let lastProjectLabelsSignature = "";
   let goalsMiniQueued = false;
+  let goalsMiniRetryTimer = null;
   let lastGoalsMiniSignature = "";
   let goalsViewMode = "actual";
   let goalsProgressMode = "cumulative";
@@ -102,7 +107,6 @@
   let streakHoverDataPromise = null;
   let streakHoverData = null;
   let streakHoverDataCacheKey = "";
-  const nativeGoalsHtmlCache = new WeakMap();
   let lastFarmThemeDebugSignature = "";
   let farmThemeRefreshQueued = false;
   let farmThemeRefreshToken = 0;
@@ -1016,7 +1020,7 @@
         work.chrome = true;
       }
       if (!work.goals && projectGoals.length) {
-        if (work.shop || work.chrome || nodeMatchesOrContains(node, "#macondo-utils-goals-mini")) {
+        if (work.shop || work.chrome || nodeMatchesOrContains(node, `#${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}`)) {
           work.goals = true;
         }
       }
@@ -1617,35 +1621,51 @@
   }
 
   async function fetchProjectApi(projectId) {
-    const response = await fetch(`/api/projects/${projectId}`, { credentials: "include" });
-    if (!response.ok) {
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, { credentials: "include" });
+      if (!response.ok) {
+        return null;
+      }
+      return await response.json();
+    } catch (_err) {
       return null;
     }
-    return response.json();
   }
 
   async function fetchProfileHtml() {
-    const response = await fetch("/profile", { credentials: "include" });
-    if (!response.ok) {
+    try {
+      const response = await fetch("/profile", { credentials: "include" });
+      if (!response.ok) {
+        return null;
+      }
+      return await response.text();
+    } catch (_err) {
       return null;
     }
-    return response.text();
   }
 
   async function fetchProfileStreaks() {
-    const response = await fetch("/api/profile/streaks", { credentials: "include" });
-    if (!response.ok) {
+    try {
+      const response = await fetch("/api/profile/streaks", { credentials: "include" });
+      if (!response.ok) {
+        return null;
+      }
+      return await response.json();
+    } catch (_err) {
       return null;
     }
-    return response.json();
   }
 
   async function fetchStreakCalendar(month) {
-    const response = await fetch(`/api/streaks/calendar?month=${encodeURIComponent(month)}`, { credentials: "include" });
-    if (!response.ok) {
+    try {
+      const response = await fetch(`/api/streaks/calendar?month=${encodeURIComponent(month)}`, { credentials: "include" });
+      if (!response.ok) {
+        return null;
+      }
+      return await response.json();
+    } catch (_err) {
       return null;
     }
-    return response.json();
   }
 
   function getYearMonthParts(date) {
@@ -2378,6 +2398,46 @@
     localStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify({
       ...payload,
       ownerName: currentOwnerName || ""
+    }));
+  }
+
+  function readHackatimeProjectsCache() {
+    const raw = localStorage.getItem(HACKATIME_PROJECTS_CACHE_KEY);
+    if (!raw) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return [];
+      }
+      if (Date.now() - Number(parsed.timestamp || 0) > HACKATIME_PROJECTS_CACHE_TTL_MS) {
+        return [];
+      }
+      const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
+      return projects
+        .map((project) => ({
+          name: String(project?.name || "").trim(),
+          seconds: Number(project?.seconds || 0)
+        }))
+        .filter((project) => project.name && Number.isFinite(project.seconds) && project.seconds > 0);
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function writeHackatimeProjectsCache(projects) {
+    const normalized = Array.isArray(projects)
+      ? projects
+        .map((project) => ({
+          name: String(project?.name || "").trim(),
+          seconds: Number(project?.seconds || 0)
+        }))
+        .filter((project) => project.name && Number.isFinite(project.seconds) && project.seconds > 0)
+      : [];
+    localStorage.setItem(HACKATIME_PROJECTS_CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      projects: normalized
     }));
   }
 
@@ -3952,24 +4012,31 @@
 
   async function fetchHackatimeProjects() {
     const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const response = await fetch(`/api/hackatime/projects?since=${since}`, {
-      method: "GET",
-      credentials: "include"
-    });
-    if (!response.ok) {
-      return [];
+    try {
+      const response = await fetch(`/api/hackatime/projects?since=${since}`, {
+        method: "GET",
+        credentials: "include"
+      });
+      if (!response.ok) {
+        return readHackatimeProjectsCache();
+      }
+      const data = await response.json();
+      if (!Array.isArray(data?.projects)) {
+        return readHackatimeProjectsCache();
+      }
+      const projects = data.projects
+        .filter((project) => typeof project?.name === "string" && project.name.trim().length > 0)
+        .sort((a, b) => Number(b.total_seconds_in_window || 0) - Number(a.total_seconds_in_window || 0))
+        .map((project) => ({
+          name: project.name.trim(),
+          seconds: Number(project.total_seconds_in_window || 0)
+        }))
+        .filter((project) => Number.isFinite(project.seconds) && project.seconds > 0);
+      writeHackatimeProjectsCache(projects);
+      return projects;
+    } catch (_err) {
+      return readHackatimeProjectsCache();
     }
-    const data = await response.json();
-    if (!Array.isArray(data?.projects)) {
-      return [];
-    }
-    return data.projects
-      .filter((project) => typeof project?.name === "string" && project.name.trim().length > 0)
-      .sort((a, b) => Number(b.total_seconds_in_window || 0) - Number(a.total_seconds_in_window || 0))
-      .map((project) => ({
-        name: project.name.trim(),
-        seconds: Number(project.total_seconds_in_window || 0)
-      }));
   }
 
   function buildHackatimeSecondsByName(projects) {
@@ -4707,14 +4774,14 @@
         view: "shop",
         title: "Your goals queue lives here",
         body: "Starred items land in this HUD so you can track progress without leaving the farm.",
-        target: () => document.getElementById("macondo-utils-goals-mini")
+        target: () => document.getElementById(GOALS_NATIVE_EXTRA_ID) || document.getElementById(GOALS_HUD_ID)
       },
       {
         id: "shop-goal-modes",
         view: "shop",
         title: "These toggles change the view",
         body: "Switch between actual and projected progress, then flip between cumulative and individual goal tracking here.",
-        target: () => document.querySelector("#macondo-utils-goals-mini .mu-goals-mini-controls-row")
+        target: () => document.querySelector(`#${GOALS_NATIVE_EXTRA_ID} .mu-goals-mini-controls-row, #${GOALS_HUD_ID} .mu-goals-mini-controls-row`)
       },
       {
         id: "settings",
@@ -4871,7 +4938,7 @@
       return union ? [union] : [];
     }
     if (step.id === "shop-goals") {
-      const hud = document.getElementById("macondo-utils-goals-mini");
+      const hud = document.getElementById(GOALS_NATIVE_EXTRA_ID) || document.getElementById(GOALS_HUD_ID);
       const union = getOnboardingUnionRect([hud], 14, 0);
       return union ? [union] : [];
     }
@@ -4883,7 +4950,7 @@
       }
     }
     if (step.id === "shop-goal-modes") {
-      const controlsRect = getOnboardingRectForElement(document.querySelector("#macondo-utils-goals-mini .mu-goals-mini-controls-row"), 10);
+      const controlsRect = getOnboardingRectForElement(document.querySelector(`#${GOALS_NATIVE_EXTRA_ID} .mu-goals-mini-controls-row, #${GOALS_HUD_ID} .mu-goals-mini-controls-row`), 10);
       return controlsRect ? [controlsRect] : [];
     }
     if (step.id === "settings") {
@@ -4944,7 +5011,7 @@
       }
     }
     if (step.id === "shop-star" && !onboardingAutoStarDone) {
-      const goalsHud = document.getElementById("macondo-utils-goals-mini");
+      const goalsHud = document.getElementById(GOALS_NATIVE_EXTRA_ID) || document.getElementById(GOALS_HUD_ID);
       const button = findShopStarButton();
       if (!goalsHud && button instanceof HTMLButtonElement && /(^|\s)Star\b/i.test(String(button.getAttribute("aria-label") || button.title || ""))) {
         onboardingAutoStarDone = true;
@@ -5246,6 +5313,9 @@
         return null;
       }
       const rows = Array.from(root.querySelectorAll("div")).filter((node) => {
+        if (root === document && node.closest(".modal-frame")) {
+          return false;
+        }
         const text = String(node.textContent || "").toLowerCase();
         return text.includes("your gold")
           && text.includes("your starfruit")
@@ -5280,17 +5350,6 @@
       }) || null;
     }
 
-    const openModal = getOpenModalElement();
-    const modalCurrencyRow = findCurrencyRow(openModal);
-    if (modalCurrencyRow && modalCurrencyRow.parentElement) {
-      const modalPanel = modalCurrencyRow.parentElement;
-      return {
-        mount: modalPanel.parentElement || modalPanel,
-        afterNode: modalPanel,
-        mode: "currency-row"
-      };
-    }
-
     const currencyRow = findCurrencyRow(document);
     if (currencyRow && currencyRow.parentElement) {
       const panel = currencyRow.parentElement;
@@ -5301,7 +5360,7 @@
       };
     }
 
-    const topOverlays = Array.from(document.querySelectorAll("[class*='absolute'][class*='top-0'][class*='left-0'][class*='right-0']"));
+    const topOverlays = Array.from(document.querySelectorAll("[class*='absolute'][class*='top-0'][class*='left-0'][class*='right-0']")).filter((node) => !node.closest(".modal-frame"));
     const topOverlay = topOverlays.find((node) => isVisibleElement(node)) || topOverlays[0] || null;
     const topRow = topOverlay?.querySelector("[class*='justify-between']");
     if (topOverlay) {
@@ -5321,13 +5380,18 @@
       return null;
     }
     const candidates = Array.from(modal.querySelectorAll("div")).filter((node) => {
-      if (!(node instanceof HTMLElement) || node.id === "macondo-utils-goals-mini") {
+      if (!(node instanceof HTMLElement) || node.id === GOALS_HUD_ID || node.id === GOALS_NATIVE_EXTRA_ID) {
         return false;
       }
       const text = String(node.textContent || "").toLowerCase();
-      return text.includes("your wishlist")
-        && text.includes("total cost")
-        && (node.querySelector("button[aria-label*='Increase quantity']") || node.querySelector("button[aria-label*='Remove from wishlist']"));
+      const hasWishlistLabel = text.includes("your wishlist") || text.includes("starred");
+      const hasSummary = text.includes("total cost") || text.includes("affordable now");
+      const hasControls = Boolean(
+        node.querySelector("button[aria-label*='Increase quantity']")
+        || node.querySelector("button[aria-label*='Decrease quantity']")
+        || node.querySelector("button[aria-label*='Remove from wishlist']")
+      );
+      return hasWishlistLabel && hasSummary && hasControls;
     });
     candidates.sort((a, b) => {
       const ar = a.getBoundingClientRect();
@@ -5338,17 +5402,13 @@
   }
 
   function restoreNativeWishlistIfNeeded() {
-    const root = findNativeWishlistRoot();
-    if (!(root instanceof HTMLElement)) {
-      return;
+    const extra = document.getElementById(GOALS_NATIVE_EXTRA_ID);
+    if (extra) {
+      extra.remove();
     }
-    const originalHtml = nativeGoalsHtmlCache.get(root);
-    if (typeof originalHtml === "string") {
-      withObserverSuppressed(() => {
-        root.innerHTML = originalHtml;
-        root.removeAttribute("data-mu-goals-patched");
-      });
-      nativeGoalsHtmlCache.delete(root);
+    const root = findNativeWishlistRoot();
+    if (root instanceof HTMLElement) {
+      root.removeAttribute("data-mu-goals-patched");
     }
   }
 
@@ -5396,6 +5456,16 @@
     });
   }
 
+  function scheduleGoalsMiniRetry(delay = 120) {
+    if (goalsMiniRetryTimer) {
+      clearTimeout(goalsMiniRetryTimer);
+    }
+    goalsMiniRetryTimer = window.setTimeout(() => {
+      goalsMiniRetryTimer = null;
+      queueGoalsMiniRender();
+    }, delay);
+  }
+
   function shouldRefreshGoalsFromMutations(records) {
     if (!projectGoals.length || !Array.isArray(records) || !records.length) {
       return false;
@@ -5405,13 +5475,10 @@
       if (!(node instanceof Element)) {
         return false;
       }
-      if (node.closest("#macondo-utils-goals-mini")) {
+      if (node.closest(`#${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}`)) {
         return false;
       }
-      if (node.matches(".modal-frame, [data-flip-id], [class*='absolute'][class*='top-0'][class*='left-0'][class*='right-0']")) {
-        return true;
-      }
-      if (node.querySelector(".modal-frame, [data-flip-id], [class*='absolute'][class*='top-0'][class*='left-0'][class*='right-0']")) {
+      if (nodeTouchesShopUi(node) || nodeTouchesDashboardChrome(node)) {
         return true;
       }
       const text = String(node.textContent || "").toLowerCase();
@@ -5420,7 +5487,7 @@
 
     return records.some((record) => {
       const target = record.target instanceof Element ? record.target : null;
-      if (target && target.closest("#macondo-utils-goals-mini")) {
+      if (target && target.closest(`#${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}`)) {
         return false;
       }
       if (isRelevantNode(target)) {
@@ -5435,7 +5502,7 @@
     if (!(node instanceof Element)) {
       return false;
     }
-    return Boolean(node.closest(`#${PROJECT_LABEL_LAYER_ID}, #${PROJECT_LABEL_SETTINGS_ID}, #${ONBOARDING_ROOT_ID}, #${STREAK_HOVER_CARD_ID}, #macondo-utils-goals-mini`));
+    return Boolean(node.closest(`#${PROJECT_LABEL_LAYER_ID}, #${PROJECT_LABEL_SETTINGS_ID}, #${ONBOARDING_ROOT_ID}, #${STREAK_HOVER_CARD_ID}, #${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}`));
   }
 
   function areMutationsOnlyFromExtensionUi(records) {
@@ -5483,7 +5550,7 @@
     if (!target) {
       return;
     }
-    const action = target.closest("#macondo-utils-goals-mini [data-goal-qty-adjust][data-goal-id], #macondo-utils-goals-mini [data-goal-remove]");
+    const action = target.closest(`#${GOALS_HUD_ID} [data-goal-qty-adjust][data-goal-id], #${GOALS_HUD_ID} [data-goal-remove], #${GOALS_NATIVE_EXTRA_ID} [data-goal-qty-adjust][data-goal-id], #${GOALS_NATIVE_EXTRA_ID} [data-goal-remove]`);
     if (!(action instanceof HTMLElement)) {
       return;
     }
@@ -5809,78 +5876,128 @@
     }
   }
 
+  function bindGoalsBoxInteractions(box) {
+    if (!(box instanceof HTMLElement)) {
+      return;
+    }
+
+    box.onclick = (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) {
+        return;
+      }
+      const action = target.closest("[data-goal-qty-adjust][data-goal-id], [data-goal-remove]");
+      if (!(action instanceof HTMLElement)) {
+        const modeToggle = target.closest("[data-goals-mode]");
+        if (modeToggle instanceof HTMLElement) {
+          event.preventDefault();
+          event.stopPropagation();
+          handleGoalsModeToggle(modeToggle);
+          return;
+        }
+        const progressModeToggle = target.closest("[data-goal-progress-mode]");
+        if (progressModeToggle instanceof HTMLElement) {
+          event.preventDefault();
+          event.stopPropagation();
+          handleGoalsProgressModeToggle(progressModeToggle);
+        }
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      handleGoalActionElement(action);
+    };
+
+    const hasList = box.querySelector(".mu-goals-mini-list") instanceof HTMLElement;
+    if (!hasList) {
+      box.ondragstart = null;
+      box.ondragover = null;
+      box.ondrop = null;
+      box.ondragend = null;
+      return;
+    }
+
+    box.ondragstart = (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id]") : null;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      draggedGoalId = String(target.getAttribute("data-goal-drag-id") || "");
+      if (!draggedGoalId) {
+        return;
+      }
+      draggedGoalPreviewNode = target;
+      target.classList.add("dragging");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", draggedGoalId);
+      }
+    };
+
+    box.ondragover = (event) => {
+      const target = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id], .mu-goals-mini-list") : null;
+      if (!(target instanceof HTMLElement) || !draggedGoalId) {
+        return;
+      }
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+      const list = box.querySelector(".mu-goals-mini-list");
+      if (list instanceof HTMLElement) {
+        previewDraggedGoalPlacement(list, target, event.clientY);
+      }
+    };
+
+    box.ondrop = (event) => {
+      const dragId = event.dataTransfer?.getData("text/plain") || draggedGoalId;
+      const list = box.querySelector(".mu-goals-mini-list");
+      if (!(list instanceof HTMLElement) || !dragId) {
+        return;
+      }
+      event.preventDefault();
+      persistGoalOrderFromContainer(list);
+      draggedGoalId = "";
+      draggedGoalPreviewNode = null;
+    };
+
+    box.ondragend = () => {
+      draggedGoalId = "";
+      draggedGoalPreviewNode = null;
+      clearDraggedGoalClasses(box);
+    };
+  }
+
   function renderGoalsMiniBox() {
-    const nativeWishlistRoot = isShopModalOpen() ? findNativeWishlistRoot() : null;
+    const shopModalOpen = isShopModalOpen();
+    const nativeWishlistRoot = shopModalOpen ? findNativeWishlistRoot() : null;
+    const existingHud = document.getElementById(GOALS_HUD_ID);
+    const existingNativeExtra = document.getElementById(GOALS_NATIVE_EXTRA_ID);
+    const shouldShowGoalsUi = projectLabelPrefs.showGoalsHud !== false && projectGoals.length > 0;
+
     if (!isDashboardPage() && !nativeWishlistRoot) {
-      const existing = document.getElementById("macondo-utils-goals-mini");
-      if (existing) {
-        existing.remove();
+      if (existingHud) {
+        existingHud.remove();
+      }
+      if (existingNativeExtra) {
+        existingNativeExtra.remove();
+      }
+      lastGoalsMiniSignature = "";
+      return;
+    }
+
+    if (!shouldShowGoalsUi) {
+      if (existingHud) {
+        existingHud.remove();
       }
       restoreNativeWishlistIfNeeded();
       lastGoalsMiniSignature = "";
       return;
     }
 
-    const existing = document.getElementById("macondo-utils-goals-mini");
-    if (projectLabelPrefs.showGoalsHud === false || !projectGoals.length) {
-      if (existing) {
-        existing.remove();
-      }
-      restoreNativeWishlistIfNeeded();
-      lastGoalsMiniSignature = "";
-      return;
-    }
-    let box = nativeWishlistRoot;
-    let mode = "native-wishlist";
-    if (nativeWishlistRoot) {
-      if (existing && existing !== nativeWishlistRoot) {
-        existing.remove();
-      }
-      if (!nativeGoalsHtmlCache.has(nativeWishlistRoot)) {
-        nativeGoalsHtmlCache.set(nativeWishlistRoot, nativeWishlistRoot.innerHTML);
-      }
-      nativeWishlistRoot.setAttribute("data-mu-goals-patched", "true");
-    } else {
-      const mountInfo = findGoalsHudMount();
-      if (!mountInfo?.mount) {
-        return;
-      }
-      const { mount, afterNode, mode: mountMode } = mountInfo;
-      mode = mountMode;
-      box = existing;
-      if (!box) {
-        withObserverSuppressed(() => {
-          box = document.createElement("div");
-          box.id = "macondo-utils-goals-mini";
-          box.className = "mu-goals-native-shell";
-          if (afterNode && afterNode.parentElement === mount) {
-            afterNode.insertAdjacentElement("afterend", box);
-          } else {
-            mount.appendChild(box);
-          }
-        });
-      } else if (afterNode && box.previousElementSibling !== afterNode) {
-        withObserverSuppressed(() => {
-          afterNode.insertAdjacentElement("afterend", box);
-        });
-      } else if (box.parentElement !== mount) {
-        withObserverSuppressed(() => {
-          mount.appendChild(box);
-        });
-      }
-      if (box.getAttribute("data-mode") !== mode) {
-        withObserverSuppressed(() => {
-          box.setAttribute("data-mode", mode);
-        });
-      }
-      if (box.className !== "mu-goals-native-shell") {
-        withObserverSuppressed(() => {
-          box.className = "mu-goals-native-shell";
-        });
-      }
-    }
-    if (!(box instanceof HTMLElement)) {
-      return;
+    if (shopModalOpen && !nativeWishlistRoot) {
+      scheduleGoalsMiniRetry();
     }
 
     const currentGold = parseCurrentGoldFromHeader();
@@ -5952,8 +6069,8 @@
         </div>
       `;
     }).join("");
-    const innerMarkup = `
-        <div class='flex items-center justify-between gap-3 flex-wrap'>
+    const dashboardMarkup = `
+        <div class='mu-goals-mini-title-row flex items-center justify-between gap-3 flex-wrap'>
           <div class='flex items-center gap-2'>
             ${starIcon}
             <span class='text-lg font-bold text-ds-brown'>Your wishlist</span>
@@ -5961,7 +6078,7 @@
           </div>
           <div class='text-lg font-bold text-ds-brown'>${totalProgressPct}%</div>
         </div>
-        <div class='mt-3 flex items-center justify-between gap-3 flex-wrap'>
+        <div class='mu-goals-mini-controls-row mt-3 flex items-center justify-between gap-3 flex-wrap'>
           <div class='flex items-center border-[2px] border-ds-brown/30'>
             <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "actual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='actual'>Actual</button>
             <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "projected" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='projected'>Projected</button>
@@ -5993,9 +6110,37 @@
           </div>
         </div>
     `;
-    const nextMarkup = innerMarkup;
-    const nextSignature = JSON.stringify({
-      mode,
+    const nativeMarkup = `
+        <div class='mu-goals-mini-controls-row flex items-center justify-between gap-3 flex-wrap'>
+          <div class='flex items-center border-[2px] border-ds-brown/30'>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "actual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='actual'>Actual</button>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "projected" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='projected'>Projected</button>
+          </div>
+          <div class='text-[11px] font-bold ${projected.coins > 0 ? "text-ds-brown/65" : "text-ds-brown/45"}'>
+            ${goalsViewMode === "projected"
+              ? `${projected.coins} projected gold from active projects`
+              : (projected.coins > 0 ? `${projected.coins} projected gold available` : "No projected gold available yet")}
+          </div>
+        </div>
+        <div class='mt-3 border-[2px] border-ds-brown/25 bg-ds-brown/5 p-3 flex flex-col gap-2'>
+          <div class='flex items-center justify-between text-sm font-bold text-ds-brown'>
+            <span>${goalsViewMode === "projected" ? "Projected total" : "Current total"}</span>
+            <span class='flex items-center gap-1'>${moneyIcon} ${displayGold}</span>
+          </div>
+          <div class='overflow-hidden' style='position:relative; height:10px; background:rgba(111, 79, 43, 0.14); border:1px solid rgba(111, 79, 43, 0.16);'>
+            <div class='transition-[width] duration-500' style='height:100%; width:${actualProgressPct}%; background:rgba(111, 79, 43, 0.42);'></div>
+            <div class='transition-[width,left] duration-500' style='position:absolute; top:0; bottom:0; left:${actualProgressPct}%; width:${projectedSegmentPct}%; background:${goalsViewMode === "projected" ? "rgb(111, 79, 43)" : "transparent"};'></div>
+          </div>
+          <div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-bold text-ds-brown/65'>
+            ${projectLabelPrefs.showHudGoalsStat !== false ? `<div>Goals: ${sorted.length}</div>` : ""}
+            ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${totalProgressGold}/${totalTargetGold}</div>` : ""}
+            ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${totalRemainingGold}</div>` : ""}
+            ${projectLabelPrefs.showHudEtaStat !== false ? `<div>ETA: ${totalEta}</div>` : ""}
+          </div>
+        </div>
+    `;
+    const dashboardSignature = JSON.stringify({
+      mode: "dashboard",
       goalsViewMode,
       goalsProgressMode,
       goals: sorted.map((goal) => ({
@@ -6015,99 +6160,117 @@
       rows
     });
 
-    const currentPatchedSignature = nativeWishlistRoot
-      ? String(box.getAttribute("data-mu-goals-signature") || "")
-      : "";
-    const shouldRewrite = nativeWishlistRoot
-      ? currentPatchedSignature !== nextSignature
-      : (lastGoalsMiniSignature !== nextSignature || box.innerHTML !== nextMarkup);
-    if (shouldRewrite) {
-      withObserverSuppressed(() => {
-        box.innerHTML = nextMarkup;
-        if (nativeWishlistRoot) {
-          box.setAttribute("data-mu-goals-signature", nextSignature);
+    if (isDashboardPage()) {
+      const mountInfo = findGoalsHudMount();
+      if (mountInfo?.mount) {
+        const { mount, afterNode, mode } = mountInfo;
+        let hudBox = existingHud;
+        if (!(hudBox instanceof HTMLElement)) {
+          withObserverSuppressed(() => {
+            hudBox = document.createElement("div");
+            hudBox.id = GOALS_HUD_ID;
+            hudBox.className = "mu-goals-native-shell";
+            if (afterNode && afterNode.parentElement === mount) {
+              afterNode.insertAdjacentElement("afterend", hudBox);
+            } else {
+              mount.appendChild(hudBox);
+            }
+          });
+        } else if (afterNode && hudBox.previousElementSibling !== afterNode) {
+          withObserverSuppressed(() => {
+            afterNode.insertAdjacentElement("afterend", hudBox);
+          });
+        } else if (hudBox.parentElement !== mount) {
+          withObserverSuppressed(() => {
+            mount.appendChild(hudBox);
+          });
         }
-      });
-      lastGoalsMiniSignature = nextSignature;
+        if (hudBox instanceof HTMLElement) {
+          if (hudBox.getAttribute("data-mode") !== mode) {
+            withObserverSuppressed(() => {
+              hudBox.setAttribute("data-mode", mode);
+            });
+          }
+          if (hudBox.className !== "mu-goals-native-shell") {
+            withObserverSuppressed(() => {
+              hudBox.className = "mu-goals-native-shell";
+            });
+          }
+          if (lastGoalsMiniSignature !== dashboardSignature || hudBox.innerHTML !== dashboardMarkup) {
+            withObserverSuppressed(() => {
+              hudBox.innerHTML = dashboardMarkup;
+            });
+            lastGoalsMiniSignature = dashboardSignature;
+          }
+          bindGoalsBoxInteractions(hudBox);
+        }
+      }
+    } else if (existingHud) {
+      existingHud.remove();
+      lastGoalsMiniSignature = "";
     }
 
-    box.onclick = (event) => {
-      const target = event.target instanceof Element ? event.target : null;
-      if (!target) {
-        return;
+    if (!(nativeWishlistRoot instanceof HTMLElement) || !(nativeWishlistRoot.parentElement instanceof HTMLElement)) {
+      if (!shopModalOpen && existingNativeExtra) {
+        existingNativeExtra.remove();
       }
-      const action = target.closest("[data-goal-qty-adjust][data-goal-id], [data-goal-remove]");
-        if (!(action instanceof HTMLElement)) {
-          const modeToggle = target.closest("[data-goals-mode]");
-          if (modeToggle instanceof HTMLElement) {
-            event.preventDefault();
-            event.stopPropagation();
-            handleGoalsModeToggle(modeToggle);
-            return;
-          }
-          const progressModeToggle = target.closest("[data-goal-progress-mode]");
-          if (progressModeToggle instanceof HTMLElement) {
-            event.preventDefault();
-            event.stopPropagation();
-            handleGoalsProgressModeToggle(progressModeToggle);
-          }
-          return;
-        }
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      handleGoalActionElement(action);
-    };
+      return;
+    }
 
-    box.ondragstart = (event) => {
-      const target = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id]") : null;
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-      draggedGoalId = String(target.getAttribute("data-goal-drag-id") || "");
-      if (!draggedGoalId) {
-        return;
-      }
-      draggedGoalPreviewNode = target;
-      target.classList.add("dragging");
-      if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", draggedGoalId);
-      }
-    };
-
-    box.ondragover = (event) => {
-      const target = event.target instanceof HTMLElement ? event.target.closest("[data-goal-drag-id], .mu-goals-mini-list") : null;
-      if (!(target instanceof HTMLElement) || !draggedGoalId) {
-        return;
-      }
-      event.preventDefault();
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = "move";
-      }
-      const list = box.querySelector(".mu-goals-mini-list");
-      if (list instanceof HTMLElement) {
-        previewDraggedGoalPlacement(list, target, event.clientY);
-      }
-    };
-
-    box.ondrop = (event) => {
-      const dragId = event.dataTransfer?.getData("text/plain") || draggedGoalId;
-      const list = box.querySelector(".mu-goals-mini-list");
-      if (!(list instanceof HTMLElement) || !dragId) {
-        return;
-      }
-      event.preventDefault();
-      persistGoalOrderFromContainer(list);
-      draggedGoalId = "";
-      draggedGoalPreviewNode = null;
-    };
-
-    box.ondragend = () => {
-      draggedGoalId = "";
-      draggedGoalPreviewNode = null;1
-      clearDraggedGoalClasses(box);
-    };
+    let nativeExtra = existingNativeExtra;
+    const nativeParent = nativeWishlistRoot.parentElement;
+    if (!(nativeExtra instanceof HTMLElement)) {
+      withObserverSuppressed(() => {
+        nativeExtra = document.createElement("div");
+        nativeExtra.id = GOALS_NATIVE_EXTRA_ID;
+        nativeExtra.className = "mu-goals-native-shell";
+        nativeWishlistRoot.insertAdjacentElement("afterend", nativeExtra);
+      });
+    } else if (nativeExtra.parentElement !== nativeParent || nativeExtra.previousElementSibling !== nativeWishlistRoot) {
+      withObserverSuppressed(() => {
+        nativeWishlistRoot.insertAdjacentElement("afterend", nativeExtra);
+      });
+    }
+    if (!(nativeExtra instanceof HTMLElement)) {
+      return;
+    }
+    if (nativeExtra.className !== "mu-goals-native-shell") {
+      withObserverSuppressed(() => {
+        nativeExtra.className = "mu-goals-native-shell";
+      });
+    }
+    if (nativeExtra.getAttribute("data-mode") !== "native-extra") {
+      withObserverSuppressed(() => {
+        nativeExtra.setAttribute("data-mode", "native-extra");
+      });
+    }
+    const nativeSignature = JSON.stringify({
+      mode: "native-extra",
+      goalsViewMode,
+      goals: sorted.map((goal) => ({
+        id: goal.id,
+        quantity: goal.quantity,
+        unitGold: goal.unitGold,
+        name: goal.name
+      })),
+      currentGold,
+      projectedCoins: projected.coins,
+      totalProgressGold,
+      totalProgressPct,
+      actualProgressPct,
+      projectedSegmentPct,
+      totalTargetGold,
+      totalRemainingGold,
+      totalEta
+    });
+    if (String(nativeExtra.getAttribute("data-mu-goals-signature") || "") !== nativeSignature || nativeExtra.innerHTML !== nativeMarkup) {
+      withObserverSuppressed(() => {
+        nativeExtra.innerHTML = nativeMarkup;
+        nativeExtra.setAttribute("data-mu-goals-signature", nativeSignature);
+      });
+    }
+    nativeWishlistRoot.setAttribute("data-mu-goals-patched", "true");
+    bindGoalsBoxInteractions(nativeExtra);
   }
 
   function updateShopCardHours() {
@@ -6191,6 +6354,16 @@
     }
   }
 
+  function refreshProjectLabelMetaSafely(force = false) {
+    refreshProjectLabelMeta(force).catch(() => {
+    });
+  }
+
+  function refreshEffectiveRateSafely() {
+    refreshEffectiveRate().catch(() => {
+    });
+  }
+
   function scheduleRefresh(reason, delayMs = 400) {
     if (effectiveGoldPerHour) {
       return;
@@ -6200,7 +6373,7 @@
     }
     refreshRetryTimer = window.setTimeout(() => {
       refreshRetryTimer = null;
-      refreshEffectiveRate();
+      refreshEffectiveRateSafely();
     }, delayMs);
   }
 
@@ -6391,8 +6564,8 @@
   ensureStreakHoverInteraction();
   queueGoalsMiniRender();
   queueOnboardingRender();
-  refreshProjectLabelMeta();
-  refreshEffectiveRate();
+  refreshProjectLabelMetaSafely();
+  refreshEffectiveRateSafely();
   refreshGoalOrderStatus();
   recordSessionStart();
   window.addEventListener("pagehide", () => {
@@ -6408,29 +6581,29 @@
     }
   });
   setInterval(() => {
-    refreshProjectLabelMeta();
+    refreshProjectLabelMetaSafely();
   }, PROJECT_LABEL_META_REFRESH_MS);
   setInterval(() => {
     refreshGoalOrderStatus();
   }, PROJECT_GOALS_ORDER_SYNC_MS);
   setTimeout(function scheduleMidnightRefresh() {
-    refreshProjectLabelMeta(true);
+    refreshProjectLabelMetaSafely(true);
     setTimeout(scheduleMidnightRefresh, msUntilNextLocalMidnight());
   }, msUntilNextLocalMidnight());
 
   window.addEventListener("focus", () => {
-    refreshProjectLabelMeta();
-    refreshEffectiveRate();
+    refreshProjectLabelMetaSafely();
+    refreshEffectiveRateSafely();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
-      refreshProjectLabelMeta();
-      refreshEffectiveRate();
+      refreshProjectLabelMetaSafely();
+      refreshEffectiveRateSafely();
     }
   });
   window.addEventListener("load", () => {
-    refreshProjectLabelMeta();
-    refreshEffectiveRate();
+    refreshProjectLabelMetaSafely();
+    refreshEffectiveRateSafely();
   });
   console.log(`${DEBUG_PREFIX} content script loaded`);
 })();
