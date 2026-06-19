@@ -98,6 +98,8 @@
   let goalsMiniQueued = false;
   let goalsMiniRetryTimer = null;
   let shopModalUiQueued = false;
+  let shopModalReadyProbeTimer = null;
+  let shopModalReadyProbeAttempts = 0;
   let shopModalObserver = null;
   let shopModalObservedRoot = null;
   let lastGoalsMiniSignature = "";
@@ -3489,6 +3491,10 @@
       return false;
     }
     if (goalsViewMode === mode) {
+      updateInjectedGoalsViewModeState();
+      if (isShopModalOpen()) {
+        renderGoalsMiniBox();
+      }
       return true;
     }
     goalsViewMode = mode;
@@ -3497,7 +3503,12 @@
       goalsViewMode: mode
     };
     writeProjectLabelPrefsCache(projectLabelPrefs);
-    queueGoalsMiniRender();
+    updateInjectedGoalsViewModeState();
+    if (isShopModalOpen()) {
+      renderGoalsMiniBox();
+    } else {
+      queueGoalsMiniRender();
+    }
     return true;
   }
 
@@ -3507,6 +3518,9 @@
     }
     const mode = normalizeGoalsProgressMode(action.getAttribute("data-goal-progress-mode") || "");
     if (goalsProgressMode === mode) {
+      if (isShopModalOpen()) {
+        renderGoalsMiniBox();
+      }
       return true;
     }
     goalsProgressMode = mode;
@@ -3519,7 +3533,11 @@
     if (panel instanceof HTMLElement && !panel.hidden) {
       renderGoalSettingsPanel(panel);
     }
-    queueGoalsMiniRender();
+    if (isShopModalOpen()) {
+      renderGoalsMiniBox();
+    } else {
+      queueGoalsMiniRender();
+    }
     return true;
   }
 
@@ -4835,14 +4853,14 @@
         view: "shop",
         title: "Your goals queue lives here",
         body: "Starred items land in this HUD so you can track progress without leaving the farm.",
-        target: () => document.getElementById(GOALS_NATIVE_EXTRA_ID) || document.getElementById(GOALS_HUD_ID)
+        target: () => findNativeWishlistRoot() || document.getElementById(GOALS_HUD_ID)
       },
       {
         id: "shop-goal-modes",
         view: "shop",
         title: "These toggles change the view",
         body: "Switch between actual and projected progress, then flip between cumulative and individual goal tracking here.",
-        target: () => document.querySelector(`#${GOALS_NATIVE_EXTRA_ID} .mu-goals-mini-controls-row, #${GOALS_HUD_ID} .mu-goals-mini-controls-row`)
+        target: () => document.getElementById("macondo-utils-goals-native-view-mode") || document.querySelector(`#${GOALS_HUD_ID} .mu-goals-mini-controls-row`)
       },
       {
         id: "settings",
@@ -4999,7 +5017,7 @@
       return union ? [union] : [];
     }
     if (step.id === "shop-goals") {
-      const hud = document.getElementById(GOALS_NATIVE_EXTRA_ID) || document.getElementById(GOALS_HUD_ID);
+      const hud = findNativeWishlistRoot() || document.getElementById(GOALS_HUD_ID);
       const union = getOnboardingUnionRect([hud], 14, 0);
       return union ? [union] : [];
     }
@@ -5011,7 +5029,7 @@
       }
     }
     if (step.id === "shop-goal-modes") {
-      const controlsRect = getOnboardingRectForElement(document.querySelector(`#${GOALS_NATIVE_EXTRA_ID} .mu-goals-mini-controls-row, #${GOALS_HUD_ID} .mu-goals-mini-controls-row`), 10);
+      const controlsRect = getOnboardingRectForElement(document.getElementById("macondo-utils-goals-native-view-mode") || document.querySelector(`#${GOALS_HUD_ID} .mu-goals-mini-controls-row`), 10);
       return controlsRect ? [controlsRect] : [];
     }
     if (step.id === "settings") {
@@ -5072,7 +5090,7 @@
       }
     }
     if (step.id === "shop-star" && !onboardingAutoStarDone) {
-      const goalsHud = document.getElementById(GOALS_NATIVE_EXTRA_ID) || document.getElementById(GOALS_HUD_ID);
+      const goalsHud = findNativeWishlistRoot() || document.getElementById(GOALS_HUD_ID);
       const button = findShopStarButton();
       if (!goalsHud && button instanceof HTMLButtonElement && /(^|\s)Star\b/i.test(String(button.getAttribute("aria-label") || button.title || ""))) {
         onboardingAutoStarDone = true;
@@ -5452,9 +5470,30 @@
         || node.querySelector("button[aria-label*='Decrease quantity']")
         || node.querySelector("button[aria-label*='Remove from wishlist']")
       );
-      return hasWishlistLabel && hasSummary && hasControls;
+      const hasWishlistHeader = text.includes("your wishlist") || /\d+\s+starred/i.test(text);
+      return hasWishlistLabel && (hasSummary || hasControls || hasWishlistHeader);
     });
     candidates.sort((a, b) => {
+      const aText = String(a.textContent || "").toLowerCase();
+      const bText = String(b.textContent || "").toLowerCase();
+      const aHasSummary = aText.includes("total cost") || aText.includes("affordable now");
+      const bHasSummary = bText.includes("total cost") || bText.includes("affordable now");
+      if (aHasSummary !== bHasSummary) {
+        return aHasSummary ? -1 : 1;
+      }
+      const aHasControls = Boolean(
+        a.querySelector("button[aria-label*='Increase quantity']")
+        || a.querySelector("button[aria-label*='Decrease quantity']")
+        || a.querySelector("button[aria-label*='Remove from wishlist']")
+      );
+      const bHasControls = Boolean(
+        b.querySelector("button[aria-label*='Increase quantity']")
+        || b.querySelector("button[aria-label*='Decrease quantity']")
+        || b.querySelector("button[aria-label*='Remove from wishlist']")
+      );
+      if (aHasControls !== bHasControls) {
+        return aHasControls ? -1 : 1;
+      }
       const ar = a.getBoundingClientRect();
       const br = b.getBoundingClientRect();
       return ar.width * ar.height - br.width * br.height;
@@ -5467,10 +5506,81 @@
     if (extra) {
       extra.remove();
     }
+    document.querySelectorAll("#macondo-utils-goals-native-view-mode").forEach((node) => node.remove());
+    document.querySelectorAll("#macondo-utils-goals-native-stats").forEach((node) => node.remove());
+    document.querySelectorAll("#macondo-utils-goals-native-mode-wrap").forEach((node) => {
+      if (!(node instanceof HTMLElement)) {
+        node.remove();
+        return;
+      }
+      const progressModeGroup = Array.from(node.children).find((child) => {
+        return child instanceof HTMLElement && child.id !== "macondo-utils-goals-native-view-mode";
+      });
+      const headerRow = node.parentElement;
+      if (progressModeGroup instanceof HTMLElement && headerRow instanceof HTMLElement) {
+        headerRow.appendChild(progressModeGroup);
+      }
+      node.remove();
+    });
     const root = findNativeWishlistRoot();
     if (root instanceof HTMLElement) {
       root.removeAttribute("data-mu-goals-patched");
     }
+  }
+
+  function findNativeWishlistSummaryBox(root) {
+    if (!(root instanceof HTMLElement)) {
+      return null;
+    }
+    const candidates = Array.from(root.querySelectorAll("div")).filter((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const text = String(node.textContent || "").toLowerCase();
+      return text.includes("total cost")
+        && (text.includes("afford") || text.includes("wishlist"))
+        && Boolean(node.querySelector("img[src*='money']"));
+    });
+    candidates.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return ar.width * ar.height - br.width * br.height;
+    });
+    return candidates[0] || null;
+  }
+
+  function getNativeWishlistCount(root, fallbackCount) {
+    if (!(root instanceof HTMLElement)) {
+      return fallbackCount;
+    }
+    const starredMatch = String(root.textContent || "").match(/(\d+)\s+starred/i);
+    if (starredMatch?.[1]) {
+      const starredCount = Number.parseInt(starredMatch[1], 10);
+      if (Number.isFinite(starredCount) && starredCount >= 0) {
+        return starredCount;
+      }
+    }
+    const cards = Array.from(root.querySelectorAll("[draggable='true']")).filter((card) => {
+      if (!(card instanceof HTMLElement) || card.closest("#macondo-utils-goals-native-stats")) {
+        return false;
+      }
+      return Boolean(card.querySelector("img[src*='money']"));
+    });
+    return cards.length || fallbackCount;
+  }
+
+  function getNativeWishlistTotalCost(summaryBox, fallbackTotal) {
+    if (!(summaryBox instanceof HTMLElement)) {
+      return fallbackTotal;
+    }
+    const moneyNode = Array.from(summaryBox.querySelectorAll("span, div")).find((node) => {
+      if (!(node instanceof HTMLElement) || node.closest("#macondo-utils-goals-native-stats")) {
+        return false;
+      }
+      return Boolean(node.querySelector("img[src*='money']")) && /\d/.test(String(node.textContent || ""));
+    });
+    const parsedTotal = parseFloatSafe(moneyNode?.textContent || "");
+    return Number.isFinite(parsedTotal) && parsedTotal >= 0 ? Math.round(parsedTotal) : fallbackTotal;
   }
 
   function findDashboardAverageRateRow() {
@@ -5544,7 +5654,35 @@
     }
     updateShopCardHours(modal);
     collapseShopFilterChips(modal);
-    queueGoalsMiniRender();
+    renderGoalsMiniBox();
+  }
+
+  function runShopModalReadyProbe() {
+    shopModalReadyProbeTimer = null;
+    shopModalReadyProbeAttempts += 1;
+
+    const modal = getShopModalElement();
+    if (modal instanceof HTMLElement) {
+      if (shopModalObservedRoot !== modal) {
+        ensureShopModalObserver();
+      }
+      refreshShopModalUi();
+      if (document.getElementById("macondo-utils-goals-native-view-mode")) {
+        return;
+      }
+    }
+
+    if (shopModalReadyProbeAttempts < 24) {
+      shopModalReadyProbeTimer = window.setTimeout(runShopModalReadyProbe, 90);
+    }
+  }
+
+  function startShopModalReadyProbe() {
+    shopModalReadyProbeAttempts = 0;
+    if (shopModalReadyProbeTimer) {
+      clearTimeout(shopModalReadyProbeTimer);
+    }
+    shopModalReadyProbeTimer = window.setTimeout(runShopModalReadyProbe, 0);
   }
 
   function scheduleShopModalUiRefresh() {
@@ -5621,7 +5759,7 @@
     if (!(node instanceof Element)) {
       return false;
     }
-    return Boolean(node.closest(`#${PROJECT_LABEL_LAYER_ID}, #${PROJECT_LABEL_SETTINGS_ID}, #${ONBOARDING_ROOT_ID}, #${STREAK_HOVER_CARD_ID}, #${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}`));
+    return Boolean(node.closest(`#${PROJECT_LABEL_LAYER_ID}, #${PROJECT_LABEL_SETTINGS_ID}, #${ONBOARDING_ROOT_ID}, #${STREAK_HOVER_CARD_ID}, #${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}, #macondo-utils-goals-native-mode-wrap, #macondo-utils-goals-native-view-mode, #macondo-utils-goals-native-stats`));
   }
 
   function areMutationsOnlyFromExtensionUi(records) {
@@ -5661,6 +5799,13 @@
       });
       return nodes.length > 0 && nodes.every((node) => node === shopModalObservedRoot || shopModalObservedRoot.contains(node));
     });
+  }
+
+  function handleShopModalOpenIntent(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".donkey-area")) {
+      startShopModalReadyProbe();
+    }
   }
 
   function handleShopStarToggleClick(event) {
@@ -6152,12 +6297,64 @@
     };
   }
 
+  function bindInjectedGoalsViewModeButtons(root) {
+    if (!(root instanceof HTMLElement)) {
+      return;
+    }
+    root.querySelectorAll("[data-goals-mode]").forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        handleGoalsModeToggle(button);
+      };
+    });
+  }
+
+  function getInjectedGoalsViewModeClass(mode) {
+    const isActive = goalsViewMode === mode;
+    return `px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${isActive ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}`;
+  }
+
+  function updateInjectedGoalsViewModeState(root = document) {
+    const scope = root instanceof Element || root instanceof Document ? root : document;
+    scope.querySelectorAll("#macondo-utils-goals-native-view-mode [data-goals-mode]").forEach((button) => {
+      if (!(button instanceof HTMLElement)) {
+        return;
+      }
+      const mode = String(button.getAttribute("data-goals-mode") || "").toLowerCase();
+      if (mode === "actual" || mode === "projected") {
+        button.className = getInjectedGoalsViewModeClass(mode);
+      }
+    });
+  }
+
+  function handleInjectedGoalsViewModeClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest("#macondo-utils-goals-native-view-mode [data-goals-mode]");
+    if (!(button instanceof HTMLElement)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    handleGoalsModeToggle(button);
+  }
+
   function renderGoalsMiniBox() {
     const shopModalOpen = isShopModalOpen();
     const nativeWishlistRoot = shopModalOpen ? findNativeWishlistRoot() : null;
     const existingHud = document.getElementById(GOALS_HUD_ID);
     const existingNativeExtra = document.getElementById(GOALS_NATIVE_EXTRA_ID);
-    const shouldShowGoalsUi = projectLabelPrefs.showGoalsHud !== false && projectGoals.length > 0;
+    const nativeWishlistItemCount = nativeWishlistRoot instanceof HTMLElement ? getNativeWishlistCount(nativeWishlistRoot, 0) : 0;
+    const shouldShowGoalsUi = projectLabelPrefs.showGoalsHud !== false && (projectGoals.length > 0 || (shopModalOpen && nativeWishlistItemCount > 0));
+
+    if (shopModalOpen && !nativeWishlistRoot) {
+      scheduleGoalsMiniRetry();
+    }
 
     if (!isDashboardPage() && !nativeWishlistRoot) {
       if (existingHud) {
@@ -6177,10 +6374,6 @@
       restoreNativeWishlistIfNeeded();
       lastGoalsMiniSignature = "";
       return;
-    }
-
-    if (shopModalOpen && !nativeWishlistRoot) {
-      scheduleGoalsMiniRetry();
     }
 
     const currentGold = parseCurrentGoldFromHeader();
@@ -6293,39 +6486,6 @@
           </div>
         </div>
     `;
-    const nativeMarkup = `
-        <div class='mu-goals-mini-controls-row flex items-center justify-between gap-3 flex-wrap'>
-          <div class='flex items-center border-[2px] border-ds-brown/30'>
-            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "actual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='actual'>Actual</button>
-            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "projected" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='projected'>Projected</button>
-          </div>
-          <div class='flex items-center border-[2px] border-ds-brown/30'>
-            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsProgressMode === "cumulative" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goal-progress-mode='cumulative'>All together</button>
-            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsProgressMode === "individual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goal-progress-mode='individual'>Per item</button>
-          </div>
-        </div>
-        <div class='mt-2 text-[11px] font-bold ${projected.coins > 0 ? "text-ds-brown/65" : "text-ds-brown/45"}'>
-          ${goalsViewMode === "projected"
-            ? `${projected.coins} projected gold from active projects`
-            : (projected.coins > 0 ? `${projected.coins} projected gold available` : "No projected gold available yet")}
-        </div>
-        <div class='mt-3 border-[2px] border-ds-brown/25 bg-ds-brown/5 p-3 flex flex-col gap-2'>
-          <div class='flex items-center justify-between text-sm font-bold text-ds-brown'>
-            <span>${goalsViewMode === "projected" ? "Projected total" : "Current total"}</span>
-            <span class='flex items-center gap-1'>${moneyIcon} ${displayGold}</span>
-          </div>
-          <div class='overflow-hidden' style='position:relative; height:10px; background:rgba(111, 79, 43, 0.14); border:1px solid rgba(111, 79, 43, 0.16);'>
-            <div class='transition-[width] duration-500' style='height:100%; width:${actualProgressPct}%; background:rgba(111, 79, 43, 0.42);'></div>
-            <div class='transition-[width,left] duration-500' style='position:absolute; top:0; bottom:0; left:${actualProgressPct}%; width:${projectedSegmentPct}%; background:${goalsViewMode === "projected" ? "rgb(111, 79, 43)" : "transparent"};'></div>
-          </div>
-          <div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-bold text-ds-brown/65'>
-            ${projectLabelPrefs.showHudGoalsStat !== false ? `<div>Goals: ${sorted.length}</div>` : ""}
-            ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${totalProgressGold}/${totalTargetGold}</div>` : ""}
-            ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${totalRemainingGold}</div>` : ""}
-            ${projectLabelPrefs.showHudEtaStat !== false ? `<div>ETA: ${totalEta}</div>` : ""}
-          </div>
-        </div>
-    `;
     const dashboardSignature = JSON.stringify({
       mode: "dashboard",
       goalsViewMode,
@@ -6403,67 +6563,113 @@
       lastGoalsMiniSignature = "";
     }
 
-    if (!(nativeWishlistRoot instanceof HTMLElement) || !(nativeWishlistRoot.parentElement instanceof HTMLElement)) {
-      if (!shopModalOpen && existingNativeExtra) {
-        existingNativeExtra.remove();
-      }
+    if (existingNativeExtra) {
+      existingNativeExtra.remove();
+    }
+    if (!(nativeWishlistRoot instanceof HTMLElement)) {
       return;
     }
 
-    let nativeExtra = existingNativeExtra;
-    const nativeParent = nativeWishlistRoot.parentElement;
-    if (!(nativeExtra instanceof HTMLElement)) {
-      withObserverSuppressed(() => {
-        nativeExtra = document.createElement("div");
-        nativeExtra.id = GOALS_NATIVE_EXTRA_ID;
-        nativeExtra.className = "mu-goals-native-shell";
-        nativeWishlistRoot.insertAdjacentElement("afterend", nativeExtra);
-      });
-    } else if (nativeExtra.parentElement !== nativeParent || nativeExtra.previousElementSibling !== nativeWishlistRoot) {
-      withObserverSuppressed(() => {
-        nativeWishlistRoot.insertAdjacentElement("afterend", nativeExtra);
-      });
+    const progressModeGroup = Array.from(nativeWishlistRoot.querySelectorAll("div")).find((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const directButtons = Array.from(node.children).filter((child) => child instanceof HTMLButtonElement);
+      if (directButtons.length !== 2) {
+        return false;
+      }
+      const text = directButtons.map((button) => String(button.textContent || "").trim().toLowerCase());
+      return text.includes("all together") && text.includes("per item");
+    }) || null;
+    const controlsRow = progressModeGroup?.parentElement instanceof HTMLElement ? progressModeGroup.parentElement : null;
+    const summaryBox = findNativeWishlistSummaryBox(nativeWishlistRoot);
+    let nativePartsMissing = false;
+    if (controlsRow instanceof HTMLElement) {
+      let modeWrap = nativeWishlistRoot.querySelector("#macondo-utils-goals-native-mode-wrap");
+      let viewModeGroup = nativeWishlistRoot.querySelector("#macondo-utils-goals-native-view-mode");
+      const nextControlsMarkup = `
+        <button type='button' class='${getInjectedGoalsViewModeClass("actual")}' data-goals-mode='actual'>Actual</button>
+        <button type='button' class='${getInjectedGoalsViewModeClass("projected")}' data-goals-mode='projected'>Projected</button>
+      `;
+      if (!(modeWrap instanceof HTMLElement)) {
+        withObserverSuppressed(() => {
+          modeWrap = document.createElement("div");
+          modeWrap.id = "macondo-utils-goals-native-mode-wrap";
+          modeWrap.className = "ml-auto flex items-center gap-2 flex-wrap";
+          if (progressModeGroup instanceof HTMLElement) {
+            controlsRow.appendChild(modeWrap);
+            modeWrap.appendChild(progressModeGroup);
+          } else {
+            controlsRow.appendChild(modeWrap);
+          }
+        });
+      } else if (progressModeGroup instanceof HTMLElement && progressModeGroup.parentElement !== modeWrap) {
+        withObserverSuppressed(() => {
+          modeWrap.appendChild(progressModeGroup);
+        });
+      }
+      if (!(viewModeGroup instanceof HTMLElement)) {
+        withObserverSuppressed(() => {
+          viewModeGroup = document.createElement("div");
+          viewModeGroup.id = "macondo-utils-goals-native-view-mode";
+          viewModeGroup.className = "flex items-center border-[2px] border-ds-brown/30";
+          if (modeWrap instanceof HTMLElement) {
+            modeWrap.insertBefore(viewModeGroup, modeWrap.firstChild || null);
+          }
+        });
+      } else if (modeWrap instanceof HTMLElement && viewModeGroup.parentElement !== modeWrap) {
+        withObserverSuppressed(() => {
+          modeWrap.insertBefore(viewModeGroup, modeWrap.firstChild || null);
+        });
+      }
+      if (viewModeGroup instanceof HTMLElement && viewModeGroup.innerHTML !== nextControlsMarkup) {
+        withObserverSuppressed(() => {
+          viewModeGroup.innerHTML = nextControlsMarkup;
+        });
+      }
+      bindInjectedGoalsViewModeButtons(viewModeGroup);
+      updateInjectedGoalsViewModeState(viewModeGroup);
+    } else {
+      nativePartsMissing = true;
     }
-    if (!(nativeExtra instanceof HTMLElement)) {
-      return;
+
+    if (summaryBox instanceof HTMLElement) {
+      let statsBox = nativeWishlistRoot.querySelector("#macondo-utils-goals-native-stats");
+      const nativeGoalCount = getNativeWishlistCount(nativeWishlistRoot, sorted.length);
+      const nativeTargetGold = getNativeWishlistTotalCost(summaryBox, totalTargetGold);
+      const nativeProgressGold = Math.max(0, displayGold);
+      const nativeRemainingGold = Math.max(0, nativeTargetGold - nativeProgressGold);
+      const nativeEta = formatEtaHours(rate > 0 ? nativeRemainingGold / rate : 0);
+      const statsMarkup = `
+        <div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-bold text-ds-brown/65'>
+          ${projectLabelPrefs.showHudGoalsStat !== false ? `<div>Goals: ${nativeGoalCount}</div>` : ""}
+          ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${nativeProgressGold}/${nativeTargetGold}</div>` : ""}
+          ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${nativeRemainingGold}</div>` : ""}
+          ${projectLabelPrefs.showHudEtaStat !== false ? `<div>ETA: ${nativeEta}</div>` : ""}
+        </div>
+      `;
+      if (!(statsBox instanceof HTMLElement)) {
+        withObserverSuppressed(() => {
+          statsBox = document.createElement("div");
+          statsBox.id = "macondo-utils-goals-native-stats";
+          statsBox.className = "mt-3";
+          summaryBox.appendChild(statsBox);
+        });
+      }
+      if (statsBox instanceof HTMLElement && statsBox.innerHTML !== statsMarkup) {
+        withObserverSuppressed(() => {
+          statsBox.innerHTML = statsMarkup;
+        });
+      }
+    } else {
+      nativePartsMissing = true;
     }
-    if (nativeExtra.className !== "mu-goals-native-shell") {
-      withObserverSuppressed(() => {
-        nativeExtra.className = "mu-goals-native-shell";
-      });
-    }
-    if (nativeExtra.getAttribute("data-mode") !== "native-extra") {
-      withObserverSuppressed(() => {
-        nativeExtra.setAttribute("data-mode", "native-extra");
-      });
-    }
-    const nativeSignature = JSON.stringify({
-      mode: "native-extra",
-      goalsViewMode,
-      goals: sorted.map((goal) => ({
-        id: goal.id,
-        quantity: goal.quantity,
-        unitGold: goal.unitGold,
-        name: goal.name
-      })),
-      currentGold,
-      projectedCoins: projected.coins,
-      totalProgressGold,
-      totalProgressPct,
-      actualProgressPct,
-      projectedSegmentPct,
-      totalTargetGold,
-      totalRemainingGold,
-      totalEta
-    });
-    if (String(nativeExtra.getAttribute("data-mu-goals-signature") || "") !== nativeSignature || nativeExtra.innerHTML !== nativeMarkup) {
-      withObserverSuppressed(() => {
-        nativeExtra.innerHTML = nativeMarkup;
-        nativeExtra.setAttribute("data-mu-goals-signature", nativeSignature);
-      });
-    }
+
     nativeWishlistRoot.setAttribute("data-mu-goals-patched", "true");
-    bindGoalsBoxInteractions(nativeExtra);
+    bindGoalsBoxInteractions(nativeWishlistRoot);
+    if (nativePartsMissing) {
+      scheduleGoalsMiniRetry(180);
+    }
   }
 
   function updateShopCardHours(root = document) {
@@ -6644,6 +6850,7 @@
     }
     const work = summarizeMutationWork(records);
     if (work.shop) {
+      startShopModalReadyProbe();
       ensureShopModalObserver();
     } else if (!isShopModalOpen()) {
       disconnectShopModalObserver();
@@ -6729,11 +6936,14 @@
   }
 
   document.addEventListener("pointerdown", trackCreateTilePointerDown, true);
+  document.addEventListener("pointerdown", handleShopModalOpenIntent, true);
   document.addEventListener("pointermove", trackCreateTilePointerMove, true);
   document.addEventListener("pointerup", trackCreateTilePointerUp, true);
   document.addEventListener("pointercancel", trackCreateTilePointerUp, true);
+  document.addEventListener("click", handleShopModalOpenIntent, true);
   document.addEventListener("click", maybeInterceptCreateTileClick, true);
   document.addEventListener("click", maybeInterceptStreakButtonClick, true);
+  document.addEventListener("click", handleInjectedGoalsViewModeClick, true);
   document.addEventListener("click", handleShopStarToggleClick, true);
   document.addEventListener("click", handleShopCardGoalActionClick, true);
   document.addEventListener("click", (event) => {
@@ -6760,6 +6970,7 @@
   updateShopCardHours();
   collapseShopFilterChips();
   ensureShopModalObserver();
+  startShopModalReadyProbe();
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
   ensureStreakHoverInteraction();
@@ -6794,12 +7005,14 @@
 
   window.addEventListener("focus", () => {
     ensureShopModalObserver();
+    startShopModalReadyProbe();
     refreshProjectLabelMetaSafely();
     refreshEffectiveRateSafely();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
       ensureShopModalObserver();
+      startShopModalReadyProbe();
       refreshProjectLabelMetaSafely();
       refreshEffectiveRateSafely();
     } else {
@@ -6808,6 +7021,7 @@
   });
   window.addEventListener("load", () => {
     ensureShopModalObserver();
+    startShopModalReadyProbe();
     refreshProjectLabelMetaSafely();
     refreshEffectiveRateSafely();
   });
