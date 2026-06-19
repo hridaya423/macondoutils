@@ -97,6 +97,9 @@
   let lastProjectLabelsSignature = "";
   let goalsMiniQueued = false;
   let goalsMiniRetryTimer = null;
+  let shopModalUiQueued = false;
+  let shopModalObserver = null;
+  let shopModalObservedRoot = null;
   let lastGoalsMiniSignature = "";
   let goalsViewMode = "actual";
   let goalsProgressMode = "cumulative";
@@ -120,6 +123,7 @@
     showStreak: true,
     showEstCoins: true,
     showGoalsHud: true,
+    hudSize: "medium",
     goalsViewMode: "actual",
     goalsProgressMode: "cumulative",
     showHudGoalsStat: true,
@@ -169,6 +173,17 @@
     return normalized === "catpuccin" || normalized === "dark" || normalized === "dark mode"
       ? "dark"
       : "default";
+  }
+
+  function normalizeHudSize(value) {
+    const normalized = String(value || "").toLowerCase();
+    if (normalized === "small" || normalized === "high") {
+      return normalized;
+    }
+    if (normalized === "large") {
+      return "high";
+    }
+    return "medium";
   }
 
   function isCatpuccinThemeActive() {
@@ -991,7 +1006,7 @@
     if (node.closest(DASHBOARD_TOP_BAR_SELECTOR)) {
       return true;
     }
-    return nodeMatchesOrContains(node, `${DASHBOARD_TOP_BAR_SELECTOR}, img[src*='money'], img[src*='starfruit'], button[title], button[aria-label]`);
+    return nodeMatchesOrContains(node, DASHBOARD_TOP_BAR_SELECTOR);
   }
 
   function summarizeMutationWork(records) {
@@ -1020,7 +1035,7 @@
         work.chrome = true;
       }
       if (!work.goals && projectGoals.length) {
-        if (work.shop || work.chrome || nodeMatchesOrContains(node, `#${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}`)) {
+        if (work.chrome || nodeMatchesOrContains(node, `#${GOALS_HUD_ID}, #${GOALS_NATIVE_EXTRA_ID}`)) {
           work.goals = true;
         }
       }
@@ -2322,7 +2337,8 @@
       projectIds: result.projectIds
     });
     updateDashboardAverageRateRow();
-    updateShopCardHours();
+    updateShopCardHours(getShopModalElement() || document);
+    scheduleShopModalUiRefresh();
     queueGoalsMiniRender();
     refreshGoalOrderStatus();
     return true;
@@ -2449,6 +2465,7 @@
         showStreak: true,
         showEstCoins: true,
         showGoalsHud: true,
+        hudSize: "medium",
         goalsViewMode: "actual",
         goalsProgressMode: "cumulative",
         showHudGoalsStat: true,
@@ -2465,6 +2482,7 @@
         showStreak: parsed?.showStreak !== false,
         showEstCoins: parsed?.showEstCoins !== false,
         showGoalsHud: parsed?.showGoalsHud !== false,
+        hudSize: normalizeHudSize(parsed?.hudSize),
         goalsViewMode: parsed?.goalsViewMode === "projected" ? "projected" : "actual",
         goalsProgressMode: normalizeGoalsProgressMode(parsed?.goalsProgressMode),
         showHudGoalsStat: parsed?.showHudGoalsStat !== false,
@@ -2479,6 +2497,7 @@
         showStreak: true,
         showEstCoins: true,
         showGoalsHud: true,
+        hudSize: "medium",
         goalsViewMode: "actual",
         goalsProgressMode: "cumulative",
         showHudGoalsStat: true,
@@ -2497,6 +2516,7 @@
       showStreak: prefs.showStreak !== false,
       showEstCoins: prefs.showEstCoins !== false,
       showGoalsHud: prefs.showGoalsHud !== false,
+      hudSize: normalizeHudSize(prefs.hudSize),
       goalsViewMode: prefs.goalsViewMode === "projected" ? "projected" : "actual",
       goalsProgressMode: normalizeGoalsProgressMode(prefs.goalsProgressMode),
       showHudGoalsStat: prefs.showHudGoalsStat !== false,
@@ -3336,6 +3356,24 @@
     if (!(panel instanceof HTMLElement)) {
       return;
     }
+    panel.querySelectorAll("input[data-key]").forEach((input) => {
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      const key = String(input.dataset.key || "");
+      if (!key || !(key in projectLabelPrefs)) {
+        return;
+      }
+      input.checked = projectLabelPrefs[key] !== false;
+    });
+    const themeSelect = panel.querySelector("select[data-theme-key='theme']");
+    if (themeSelect instanceof HTMLSelectElement) {
+      themeSelect.value = normalizeTheme(projectLabelPrefs.theme);
+    }
+    const hudSizeSelect = panel.querySelector("select[data-hud-key='hudSize']");
+    if (hudSizeSelect instanceof HTMLSelectElement) {
+      hudSizeSelect.value = normalizeHudSize(projectLabelPrefs.hudSize);
+    }
   }
 
   function adjustGoalQuantity(goalId, delta) {
@@ -3358,7 +3396,8 @@
     if (panel instanceof HTMLElement && !panel.hidden) {
       renderGoalSettingsPanel(panel);
     }
-    syncAllShopCardGoalControls();
+    syncAllShopCardGoalControls(getShopModalElement() || document);
+    scheduleShopModalUiRefresh();
     queueGoalsMiniRender();
     recordGoalEvent("goal_qty_changed", projectGoals[idx]);
   }
@@ -3379,7 +3418,8 @@
     if (panel instanceof HTMLElement && !panel.hidden) {
       renderGoalSettingsPanel(panel);
     }
-    syncAllShopCardGoalControls();
+    syncAllShopCardGoalControls(getShopModalElement() || document);
+    scheduleShopModalUiRefresh();
     queueGoalsMiniRender();
     recordGoalEvent("goal_removed", removed);
   }
@@ -3410,7 +3450,8 @@
     if (panel instanceof HTMLElement && !panel.hidden) {
       renderGoalSettingsPanel(panel);
     }
-    syncAllShopCardGoalControls();
+    syncAllShopCardGoalControls(getShopModalElement() || document);
+    scheduleShopModalUiRefresh();
     queueGoalsMiniRender();
   }
 
@@ -3551,6 +3592,7 @@
         "<div class='mu-goals-settings'>",
         "<div class='mu-label-settings-heading'>Dashboard</div>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showGoalsHud' checked /> <span>Show HUD in dashboard</span></label>",
+        "<label class='mu-label-settings-row mu-theme-select-row'><span>HUD size</span> <select data-hud-key='hudSize' class='mu-theme-select'><option value='small'>Small</option><option value='medium'>Medium</option><option value='high'>High</option></select></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudGoalsStat' checked /> <span>Show goals box</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudProgressStat' checked /> <span>Show progress box</span></label>",
         "<label class='mu-label-settings-row'><input type='checkbox' data-key='showHudRemainingStat' checked /> <span>Show remaining box</span></label>",
@@ -3597,7 +3639,7 @@
         };
         writeProjectLabelPrefsCache(projectLabelPrefs);
         queueProjectGroundLabelsSync();
-        if (key === "showGoalsHud") {
+        if (key === "showGoalsHud" || key.startsWith("showHud")) {
           queueGoalsMiniRender();
         }
       });
@@ -3619,6 +3661,24 @@
         writeProjectLabelPrefsCache(projectLabelPrefs);
         applySelectedTheme();
         recordThemePresetEvent(nextTheme);
+      });
+
+      panel.addEventListener("change", (event) => {
+        const select = event.target instanceof HTMLSelectElement ? event.target : null;
+        const key = select?.dataset?.hudKey;
+        if (!(select instanceof HTMLSelectElement) || key !== "hudSize") {
+          return;
+        }
+        const nextHudSize = normalizeHudSize(select.value);
+        if (normalizeHudSize(projectLabelPrefs.hudSize) === nextHudSize) {
+          return;
+        }
+        projectLabelPrefs = {
+          ...projectLabelPrefs,
+          hudSize: nextHudSize
+        };
+        writeProjectLabelPrefsCache(projectLabelPrefs);
+        queueGoalsMiniRender();
       });
 
       panel.addEventListener("change", (event) => {
@@ -4654,7 +4714,8 @@
     }
     projectGoals = nextGoals;
     writeGoalsCache(projectGoals);
-    syncAllShopCardGoalControls();
+    syncAllShopCardGoalControls(getShopModalElement() || document);
+    scheduleShopModalUiRefresh();
     queueGoalsMiniRender();
   }
 
@@ -5466,6 +5527,64 @@
     }, delay);
   }
 
+  function disconnectShopModalObserver() {
+    if (shopModalObserver) {
+      shopModalObserver.disconnect();
+      shopModalObserver = null;
+    }
+    shopModalObservedRoot = null;
+  }
+
+  function refreshShopModalUi() {
+    const modal = getShopModalElement();
+    if (!(modal instanceof HTMLElement)) {
+      disconnectShopModalObserver();
+      restoreNativeWishlistIfNeeded();
+      return;
+    }
+    updateShopCardHours(modal);
+    collapseShopFilterChips(modal);
+    queueGoalsMiniRender();
+  }
+
+  function scheduleShopModalUiRefresh() {
+    if (shopModalUiQueued) {
+      return;
+    }
+    shopModalUiQueued = true;
+    requestAnimationFrame(() => {
+      shopModalUiQueued = false;
+      refreshShopModalUi();
+    });
+  }
+
+  function ensureShopModalObserver() {
+    const modal = getShopModalElement();
+    if (!(modal instanceof HTMLElement)) {
+      disconnectShopModalObserver();
+      return false;
+    }
+    if (shopModalObservedRoot === modal) {
+      return true;
+    }
+    disconnectShopModalObserver();
+    shopModalObservedRoot = modal;
+    shopModalObserver = new MutationObserver((records) => {
+      if (suppressedObserverMutations > 0 || areMutationsOnlyFromExtensionUi(records)) {
+        return;
+      }
+      scheduleShopModalUiRefresh();
+    });
+    shopModalObserver.observe(modal, {
+      attributes: true,
+      attributeFilter: ["aria-label", "title", "class", "data-flip-id"],
+      childList: true,
+      subtree: true,
+    });
+    scheduleShopModalUiRefresh();
+    return true;
+  }
+
   function shouldRefreshGoalsFromMutations(records) {
     if (!projectGoals.length || !Array.isArray(records) || !records.length) {
       return false;
@@ -5521,6 +5640,29 @@
     });
   }
 
+  function areMutationsHandledByShopObserver(records) {
+    if (!(shopModalObservedRoot instanceof HTMLElement) || !Array.isArray(records) || !records.length) {
+      return false;
+    }
+    return records.every((record) => {
+      const nodes = [];
+      if (record.target instanceof Element) {
+        nodes.push(record.target);
+      }
+      Array.from(record.addedNodes || []).forEach((node) => {
+        if (node instanceof Element) {
+          nodes.push(node);
+        }
+      });
+      Array.from(record.removedNodes || []).forEach((node) => {
+        if (node instanceof Element) {
+          nodes.push(node);
+        }
+      });
+      return nodes.length > 0 && nodes.every((node) => node === shopModalObservedRoot || shopModalObservedRoot.contains(node));
+    });
+  }
+
   function handleShopStarToggleClick(event) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) {
@@ -5530,8 +5672,7 @@
     if (!(button instanceof HTMLButtonElement)) {
       return;
     }
-    const card = button.closest(SHOP_CARD_SELECTOR);
-    const candidate = getGoalCandidateFromCard(card);
+    const candidate = getGoalCandidateFromCard(findShopCardRoot(button));
     if (!candidate) {
       return;
     }
@@ -5540,7 +5681,7 @@
       removeGoalByItemOrName(candidate);
     } else if (label.includes("star")) {
       upsertGoal(candidate);
-      refreshGoalOrderStatus();
+      scheduleShopModalUiRefresh();
     }
     recordShopInteractEvent(candidate);
   }
@@ -5559,36 +5700,24 @@
     handleGoalActionElement(action);
   }
 
-  function getShopItemsFromCards() {
-    const items = [];
-    const seen = new Set();
-    const cards = Array.from(document.querySelectorAll(SHOP_CARD_SELECTOR));
-    cards.forEach((card) => {
-      const title = String(card.querySelector("h2, h3, h4, p")?.textContent || "").trim();
-      const goldSpan = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
-      const unitGold = Math.max(0, Math.round(parseFloatSafe(goldSpan?.textContent || "") || 0));
-      const imageUrl = String(card.querySelector("img")?.getAttribute("src") || "");
-      const itemIdMatch = String(card.getAttribute("data-flip-id") || "").match(/(\d+)/);
-      const itemId = itemIdMatch?.[1] ? Number(itemIdMatch[1]) : null;
-      if (!title || unitGold <= 0) {
-        return;
-      }
-      const key = `${itemId || "x"}-${title}-${unitGold}`;
-      if (seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-      items.push({
-        id: itemId,
-        name: title,
-        unitGold,
-        imageUrl
-      });
-    });
-    return items;
+  function findShopCardRoot(node) {
+    if (!(node instanceof Element)) {
+      return null;
+    }
+    const card = node.closest(SHOP_CARD_SELECTOR);
+    if (!(card instanceof HTMLElement)) {
+      return null;
+    }
+    const heading = card.querySelector("h2, h3, h4");
+    const starButton = card.querySelector("button[aria-label*='Star'], button[aria-label*='Unstar']");
+    const priceNode = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
+    if (!(heading instanceof HTMLElement) || !(starButton instanceof HTMLElement) || !(priceNode instanceof HTMLElement)) {
+      return null;
+    }
+    return card;
   }
 
-  function getGoalCandidateFromCard(card) {
+  function parseShopCard(card) {
     if (!(card instanceof Element)) {
       return null;
     }
@@ -5598,7 +5727,9 @@
     const imageUrl = String(card.querySelector("img[alt]")?.getAttribute("src") || "");
     const itemIdMatch = String(card.getAttribute("data-flip-id") || "").match(/(\d+)/);
     const itemId = itemIdMatch?.[1] ? Number(itemIdMatch[1]) : null;
-    if (!title || unitGold <= 0) {
+    const starButton = card.querySelector("button[aria-label*='Star'], button[aria-label*='Unstar']");
+    const buyButton = card.querySelector("button[class*='ds-btn-primary'], button[class*='ds-btn-ghost']");
+    if (!title || unitGold <= 0 || !(starButton instanceof HTMLElement) || !(buyButton instanceof HTMLElement)) {
       return null;
     }
     return {
@@ -5606,8 +5737,45 @@
       name: title,
       unitGold,
       quantity: 1,
-      imageUrl
+      imageUrl,
+      starButton,
+      actionsHost: starButton.parentElement instanceof HTMLElement ? starButton.parentElement : card,
     };
+  }
+
+  function getShopItemsFromCards() {
+    const items = [];
+    const seen = new Set();
+    const cards = Array.from(document.querySelectorAll(SHOP_CARD_SELECTOR));
+    cards.forEach((card) => {
+      const parsed = parseShopCard(findShopCardRoot(card));
+      if (!parsed) {
+        return;
+      }
+      const key = `${parsed.itemId || "x"}-${parsed.name}-${parsed.unitGold}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      items.push({
+        id: parsed.itemId,
+        name: parsed.name,
+        unitGold: parsed.unitGold,
+        imageUrl: parsed.imageUrl,
+      });
+    });
+    return items;
+  }
+
+  function getGoalCandidateFromCard(card) {
+    const parsed = parseShopCard(findShopCardRoot(card));
+    return parsed ? {
+      itemId: parsed.itemId,
+      name: parsed.name,
+      unitGold: parsed.unitGold,
+      quantity: 1,
+      imageUrl: parsed.imageUrl,
+    } : null;
   }
 
   function getGoalForCandidate(candidate) {
@@ -5623,20 +5791,25 @@
   }
 
   function renderShopCardGoalControls(card) {
-    if (!(card instanceof Element)) {
+    const cardRoot = findShopCardRoot(card);
+    if (!(cardRoot instanceof Element)) {
       return;
     }
-    const candidate = getGoalCandidateFromCard(card);
-    const buyButton = card.querySelector("button[class*='ds-btn-primary']");
-    const actionsWrap = buyButton?.parentElement;
-    if (!candidate || !(actionsWrap instanceof HTMLElement)) {
+    const parsed = parseShopCard(cardRoot);
+    if (!parsed) {
       return;
     }
+    const candidate = {
+      itemId: parsed.itemId,
+      name: parsed.name,
+      unitGold: parsed.unitGold,
+      quantity: 1,
+      imageUrl: parsed.imageUrl,
+    };
 
     const goal = getGoalForCandidate(candidate);
-    const unstarButton = card.querySelector("button[title*='Unstar'], button[aria-label*='Unstar']");
-    const existingControls = card.querySelector(".mu-shop-goal-controls");
-    if (!goal || !(unstarButton instanceof HTMLElement)) {
+    const existingControls = cardRoot.querySelector(".mu-shop-goal-controls");
+    if (!goal) {
       if (existingControls) {
         withObserverSuppressed(() => {
           existingControls.remove();
@@ -5646,14 +5819,14 @@
     }
 
     const qty = Math.max(1, Number(goal.quantity) || 1);
-    const controlsHost = (unstarButton.parentElement instanceof HTMLElement) ? unstarButton.parentElement : card;
+    const controlsHost = parsed.actionsHost;
     let controls = existingControls;
     if (!controls) {
       withObserverSuppressed(() => {
         controls = document.createElement("div");
         controls.className = "mu-shop-goal-controls";
-        if (unstarButton.nextSibling) {
-          unstarButton.parentElement?.insertBefore(controls, unstarButton.nextSibling);
+        if (parsed.starButton.nextSibling) {
+          parsed.starButton.parentElement?.insertBefore(controls, parsed.starButton.nextSibling);
         } else {
           controlsHost.appendChild(controls);
         }
@@ -5711,8 +5884,23 @@
     }
   }
 
-  function syncAllShopCardGoalControls() {
-    document.querySelectorAll(SHOP_CARD_SELECTOR).forEach((card) => renderShopCardGoalControls(card));
+  function findShopCardEtaSpan(card) {
+    if (!(card instanceof Element)) {
+      return null;
+    }
+    return Array.from(card.querySelectorAll("span")).find((span) => {
+      if (!(span instanceof HTMLElement) || !span.querySelector("svg")) {
+        return false;
+      }
+      const text = String(span.textContent || "").toLowerCase();
+      return text.includes("afford")
+        || /(?:^|\s)[>~]?\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|m|h)\b/i.test(text);
+    }) || null;
+  }
+
+  function syncAllShopCardGoalControls(root = document) {
+    const scope = root instanceof Element || root instanceof Document ? root : document;
+    scope.querySelectorAll(SHOP_CARD_SELECTOR).forEach((card) => renderShopCardGoalControls(card));
   }
 
   function handleShopCardGoalActionClick(event) {
@@ -5784,7 +5972,8 @@
     if (panel instanceof HTMLElement && !panel.hidden) {
       renderGoalSettingsPanel(panel);
     }
-    syncAllShopCardGoalControls();
+    syncAllShopCardGoalControls(getShopModalElement() || document);
+    scheduleShopModalUiRefresh();
     queueGoalsMiniRender();
     if (wasAdded) {
       recordGoalEvent("goal_added", normalized);
@@ -5821,22 +6010,16 @@
     if (panel instanceof HTMLElement && !panel.hidden) {
       renderGoalSettingsPanel(panel);
     }
-    syncAllShopCardGoalControls();
+    syncAllShopCardGoalControls(getShopModalElement() || document);
+    scheduleShopModalUiRefresh();
     queueGoalsMiniRender();
     recordGoalEvent("goal_removed", removed);
   }
 
   function pruneCompletedGoalsByOrders() {
-    if (!projectGoals.length || !goalOrderedItemIds.size) {
-      return false;
-    }
-    const nextGoals = projectGoals.filter((goal) => !goal.itemId || !goalOrderedItemIds.has(goal.itemId));
-    if (nextGoals.length === projectGoals.length) {
-      return false;
-    }
-    projectGoals = nextGoals;
-    writeGoalsCache(projectGoals);
-    return true;
+    // Historical orders do not map cleanly to current goal intent or quantity.
+    // Avoid destructive auto-pruning until purchase reconciliation is quantity-aware.
+    return false;
   }
 
   async function refreshGoalOrderStatus() {
@@ -6116,11 +6299,15 @@
             <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "actual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='actual'>Actual</button>
             <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsViewMode === "projected" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goals-mode='projected'>Projected</button>
           </div>
-          <div class='text-[11px] font-bold ${projected.coins > 0 ? "text-ds-brown/65" : "text-ds-brown/45"}'>
-            ${goalsViewMode === "projected"
-              ? `${projected.coins} projected gold from active projects`
-              : (projected.coins > 0 ? `${projected.coins} projected gold available` : "No projected gold available yet")}
+          <div class='flex items-center border-[2px] border-ds-brown/30'>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsProgressMode === "cumulative" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goal-progress-mode='cumulative'>All together</button>
+            <button type='button' class='px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${goalsProgressMode === "individual" ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}' data-goal-progress-mode='individual'>Per item</button>
           </div>
+        </div>
+        <div class='mt-2 text-[11px] font-bold ${projected.coins > 0 ? "text-ds-brown/65" : "text-ds-brown/45"}'>
+          ${goalsViewMode === "projected"
+            ? `${projected.coins} projected gold from active projects`
+            : (projected.coins > 0 ? `${projected.coins} projected gold available` : "No projected gold available yet")}
         </div>
         <div class='mt-3 border-[2px] border-ds-brown/25 bg-ds-brown/5 p-3 flex flex-col gap-2'>
           <div class='flex items-center justify-between text-sm font-bold text-ds-brown'>
@@ -6189,6 +6376,12 @@
           if (hudBox.getAttribute("data-mode") !== mode) {
             withObserverSuppressed(() => {
               hudBox.setAttribute("data-mode", mode);
+            });
+          }
+          const hudSize = normalizeHudSize(projectLabelPrefs.hudSize);
+          if (hudBox.getAttribute("data-hud-size") !== hudSize) {
+            withObserverSuppressed(() => {
+              hudBox.setAttribute("data-hud-size", hudSize);
             });
           }
           if (hudBox.className !== "mu-goals-native-shell") {
@@ -6273,23 +6466,23 @@
     bindGoalsBoxInteractions(nativeExtra);
   }
 
-  function updateShopCardHours() {
+  function updateShopCardHours(root = document) {
     const goldPerHour = effectiveGoldPerHour || getCurrentGoldPerHourFromModal();
+    const scope = root instanceof Element || root instanceof Document ? root : document;
+    const currentGold = parseCurrentGoldFromHeader();
     if (!goldPerHour) {
-      document.querySelectorAll(SHOP_CARD_SELECTOR).forEach((card) => renderShopCardGoalControls(card));
+      scope.querySelectorAll(SHOP_CARD_SELECTOR).forEach((card) => renderShopCardGoalControls(card));
       return;
     }
 
-    const cards = document.querySelectorAll(SHOP_CARD_SELECTOR);
+    const cards = scope.querySelectorAll(SHOP_CARD_SELECTOR);
     let updatedCount = 0;
     cards.forEach((card) => {
       renderShopCardGoalControls(card);
-      const hoursSpan = Array.from(card.querySelectorAll("span"))
-        .find((span) => /[>›]\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|m|h)\b/i.test(span.textContent || ""));
       const goldSpan = Array.from(card.querySelectorAll("span"))
         .find((span) => /\b\d[\d,]*\b/.test(span.textContent || "") && span.querySelector("img[src*='money']"));
 
-      if (!hoursSpan || !goldSpan) {
+      if (!goldSpan) {
         return;
       }
 
@@ -6303,16 +6496,17 @@
         return;
       }
 
-      const nextHoursText = `> ${formatHours(computedHours)}`;
+      const hoursSpan = findShopCardEtaSpan(card);
+      const remainingGold = Math.max(0, goldAmount - currentGold);
+      const nextHoursText = remainingGold > 0
+        ? `${formatHours(computedHours)} (~${formatHours(remainingGold / goldPerHour)} needed)`
+        : formatHours(computedHours);
       const nextHoursTitle = `Calculated with ${goldPerHour.toFixed(2)} effective gold/hour`;
-      if (hoursSpan.textContent !== nextHoursText || hoursSpan.title !== nextHoursTitle) {
+      if (hoursSpan instanceof HTMLElement && (hoursSpan.textContent !== nextHoursText || hoursSpan.title !== nextHoursTitle)) {
         withObserverSuppressed(() => {
-          if (hoursSpan.textContent !== nextHoursText) {
-            hoursSpan.textContent = nextHoursText;
-          }
-          if (hoursSpan.title !== nextHoursTitle) {
-            hoursSpan.title = nextHoursTitle;
-          }
+          hoursSpan.className = "flex items-center gap-1 font-bold text-ds-brown/70";
+          hoursSpan.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg> ${escapeHtml(nextHoursText)}`;
+          hoursSpan.title = nextHoursTitle;
         });
       }
       updateShopCardIncludesRate(card, computedHours);
@@ -6333,8 +6527,9 @@
         updateDashboardAverageRateRow();
         if (pendingRender) {
           pendingRender = false;
-          updateShopCardHours();
+          updateShopCardHours(getShopModalElement() || document);
         }
+        scheduleShopModalUiRefresh();
         queueGoalsMiniRender();
         refreshGoalOrderStatus();
       }
@@ -6384,12 +6579,13 @@
         return;
       }
       pendingRender = false;
-      updateShopCardHours();
+      updateShopCardHours(getShopModalElement() || document);
     });
   }
 
-  function collapseShopFilterChips() {
-    const rows = Array.from(document.querySelectorAll("div")).filter((node) => {
+  function collapseShopFilterChips(root = document) {
+    const scope = root instanceof Element || root instanceof Document ? root : document;
+    const rows = Array.from(scope.querySelectorAll("div")).filter((node) => {
       if (!(node instanceof HTMLElement)) {
         return false;
       }
@@ -6430,7 +6626,7 @@
         event.preventDefault();
         event.stopPropagation();
         row.setAttribute("data-mu-chip-expanded", expanded ? "false" : "true");
-        collapseShopFilterChips();
+        collapseShopFilterChips(scope);
       });
       row.appendChild(toggle);
     });
@@ -6443,10 +6639,14 @@
     if (areMutationsOnlyFromExtensionUi(records)) {
       return;
     }
+    if (areMutationsHandledByShopObserver(records)) {
+      return;
+    }
     const work = summarizeMutationWork(records);
     if (work.shop) {
-      scheduleRender();
-      collapseShopFilterChips();
+      ensureShopModalObserver();
+    } else if (!isShopModalOpen()) {
+      disconnectShopModalObserver();
     }
     if (work.project) {
       queueProjectGroundLabelsSync();
@@ -6559,6 +6759,7 @@
 
   updateShopCardHours();
   collapseShopFilterChips();
+  ensureShopModalObserver();
   queueProjectGroundLabelsSync();
   ensureProjectLabelSettingsButton();
   ensureStreakHoverInteraction();
@@ -6592,16 +6793,21 @@
   }, msUntilNextLocalMidnight());
 
   window.addEventListener("focus", () => {
+    ensureShopModalObserver();
     refreshProjectLabelMetaSafely();
     refreshEffectiveRateSafely();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
+      ensureShopModalObserver();
       refreshProjectLabelMetaSafely();
       refreshEffectiveRateSafely();
+    } else {
+      disconnectShopModalObserver();
     }
   });
   window.addEventListener("load", () => {
+    ensureShopModalObserver();
     refreshProjectLabelMetaSafely();
     refreshEffectiveRateSafely();
   });

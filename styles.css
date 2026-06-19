@@ -890,9 +890,27 @@
 #macondo-utils-goals-native-extra.mu-goals-native-shell {
   position: relative;
   margin: 12px 8px 0 auto;
-  width: min(680px, calc(100vw - 32px));
   z-index: 10;
   pointer-events: auto;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell {
+  --mu-goals-hud-width: 680px;
+  --mu-goals-hud-scale: 1;
+  width: min(var(--mu-goals-hud-width), calc(100vw - 32px));
+  zoom: var(--mu-goals-hud-scale);
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell[data-hud-size='small'] {
+  --mu-goals-hud-scale: 0.85;
+}
+
+#macondo-utils-goals-mini.mu-goals-native-shell[data-hud-size='high'] {
+  --mu-goals-hud-scale: 1.15;
+}
+
+#macondo-utils-goals-native-extra.mu-goals-native-shell {
+  width: min(680px, calc(100vw - 32px));
 }
 
 #macondo-utils-goals-mini.mu-goals-native-shell *,
