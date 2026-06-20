@@ -162,8 +162,38 @@
   };
 
   function parseFloatSafe(text) {
-    const n = Number.parseFloat(String(text).replace(/[^0-9.]/g, ""));
-    return Number.isFinite(n) ? n : null;
+    const raw = String(text || "").trim();
+    const match = raw.match(/(\d[\d,]*(?:\.\d+)?)\s*([kKmMbB]?)/);
+    if (!match) {
+      return null;
+    }
+    let value = Number.parseFloat(match[1].replace(/,/g, ""));
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const suffix = match[2].toLowerCase();
+    if (suffix === "k") {
+      value *= 1e3;
+    } else if (suffix === "m") {
+      value *= 1e6;
+    } else if (suffix === "b") {
+      value *= 1e9;
+    }
+    return value;
+  }
+
+  function formatCompactGold(value) {
+    const n = Math.round(Number(value) || 0);
+    if (n >= 1e9) {
+      return `${(n / 1e9).toFixed(n % 1e9 === 0 ? 0 : 1).replace(/\.0$/, "")}B`;
+    }
+    if (n >= 1e6) {
+      return `${(n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1).replace(/\.0$/, "")}M`;
+    }
+    if (n >= 1e3) {
+      return `${(n / 1e3).toFixed(n % 1e3 === 0 ? 0 : 1).replace(/\.0$/, "")}k`;
+    }
+    return String(n);
   }
 
   function normalizeGoalsProgressMode(mode) {
@@ -6430,7 +6460,7 @@
                 <span class='mu-goals-card-name font-bold text-ds-brown text-sm leading-tight' style='display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;'>${escapeHtml(goal.name)}</span>
                 <button type='button' class='-mt-0.5 -mr-0.5 shrink-0 p-0.5 text-ds-brown/50 hover:text-ds-danger transition-colors' data-goal-remove='${escapeHtml(goal.id)}' aria-label='Remove from wishlist'>${closeIcon}</button>
               </div>
-              <span class='mt-0.5 flex items-center gap-1 text-xs font-bold text-ds-brown'>${moneyIcon} ${targetGold}</span>
+              <span class='mt-0.5 flex items-center gap-1 text-xs font-bold text-ds-brown'>${moneyIcon} ${formatCompactGold(targetGold)}</span>
             </div>
           </div>
           <div class='h-2 bg-ds-brown/15 overflow-hidden'><div class='h-full transition-[width] duration-500 bg-ds-brown' style='width:${pct}%;'></div></div>
@@ -6471,7 +6501,7 @@
           <div class='mt-3 border-[2px] border-ds-brown/25 bg-ds-brown/5 p-3 flex flex-col gap-2'>
             <div class='flex items-center justify-between text-sm font-bold text-ds-brown'>
               <span>Total cost</span>
-              <span class='flex items-center gap-1'>${moneyIcon} ${totalTargetGold}</span>
+              <span class='flex items-center gap-1'>${moneyIcon} ${formatCompactGold(totalTargetGold)}</span>
             </div>
             <div class='overflow-hidden' style='position:relative; height:10px; background:rgba(111, 79, 43, 0.14); border:1px solid rgba(111, 79, 43, 0.16);'>
               <div class='transition-[width] duration-500' style='height:100%; width:${actualProgressPct}%; background:rgba(111, 79, 43, 0.42);'></div>
@@ -6479,8 +6509,8 @@
             </div>
             <div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-bold text-ds-brown/65'>
               ${projectLabelPrefs.showHudGoalsStat !== false ? `<div>Goals: ${sorted.length}</div>` : ""}
-              ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${totalProgressGold}/${totalTargetGold}</div>` : ""}
-              ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${totalRemainingGold}</div>` : ""}
+              ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${formatCompactGold(totalProgressGold)}/${formatCompactGold(totalTargetGold)}</div>` : ""}
+              ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${formatCompactGold(totalRemainingGold)}</div>` : ""}
               ${projectLabelPrefs.showHudEtaStat !== false ? `<div>ETA: ${totalEta}</div>` : ""}
             </div>
           </div>
@@ -6643,8 +6673,8 @@
       const statsMarkup = `
         <div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-bold text-ds-brown/65'>
           ${projectLabelPrefs.showHudGoalsStat !== false ? `<div>Goals: ${nativeGoalCount}</div>` : ""}
-          ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${nativeProgressGold}/${nativeTargetGold}</div>` : ""}
-          ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${nativeRemainingGold}</div>` : ""}
+          ${projectLabelPrefs.showHudProgressStat !== false ? `<div>Progress: ${formatCompactGold(nativeProgressGold)}/${formatCompactGold(nativeTargetGold)}</div>` : ""}
+          ${projectLabelPrefs.showHudRemainingStat !== false ? `<div>Remaining: ${formatCompactGold(nativeRemainingGold)}</div>` : ""}
           ${projectLabelPrefs.showHudEtaStat !== false ? `<div>ETA: ${nativeEta}</div>` : ""}
         </div>
       `;
@@ -6686,7 +6716,7 @@
     cards.forEach((card) => {
       renderShopCardGoalControls(card);
       const goldSpan = Array.from(card.querySelectorAll("span"))
-        .find((span) => /\b\d[\d,]*\b/.test(span.textContent || "") && span.querySelector("img[src*='money']"));
+        .find((span) => /\d[\d,.]*\s*[kKmMbB]?/.test(span.textContent || "") && span.querySelector("img[src*='money']"));
 
       if (!goldSpan) {
         return;
