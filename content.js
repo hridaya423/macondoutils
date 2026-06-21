@@ -5886,10 +5886,25 @@
     const heading = card.querySelector("h2, h3, h4");
     const starButton = card.querySelector("button[aria-label*='Star'], button[aria-label*='Unstar']");
     const priceNode = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
-    if (!(heading instanceof HTMLElement) || !(starButton instanceof HTMLElement) || !(priceNode instanceof HTMLElement)) {
+    const buyButton = card.querySelector("button[class*='ds-btn-primary'], button[class*='ds-btn-ghost']");
+    if (!(heading instanceof HTMLElement) || !(starButton instanceof HTMLElement) || (!(priceNode instanceof HTMLElement) && !(buyButton instanceof HTMLElement))) {
       return null;
     }
     return card;
+  }
+
+  function getShopCardGoldAmount(card) {
+    if (!(card instanceof Element)) {
+      return 0;
+    }
+    const goldSpan = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
+    const goldFromSpan = parseFloatSafe(goldSpan?.textContent || "") || 0;
+    if (goldFromSpan > 0) {
+      return Math.round(goldFromSpan);
+    }
+    const buyButton = card.querySelector("button[class*='ds-btn-primary'], button[class*='ds-btn-ghost']");
+    const goldFromButton = parseFloatSafe(String(buyButton?.textContent || "")) || 0;
+    return goldFromButton > 0 ? Math.round(goldFromButton) : 0;
   }
 
   function parseShopCard(card) {
@@ -5897,8 +5912,7 @@
       return null;
     }
     const title = String(card.querySelector("h2, h3, h4")?.textContent || "").trim();
-    const goldSpan = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
-    const unitGold = Math.max(0, Math.round(parseFloatSafe(goldSpan?.textContent || "") || 0));
+    const unitGold = Math.max(0, getShopCardGoldAmount(card));
     const imageUrl = String(card.querySelector("img[alt]")?.getAttribute("src") || "");
     const itemIdMatch = String(card.getAttribute("data-flip-id") || "").match(/(\d+)/);
     const itemId = itemIdMatch?.[1] ? Number(itemIdMatch[1]) : null;
@@ -6071,6 +6085,49 @@
       return text.includes("afford")
         || /(?:^|\s)[>~]?\s*\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?|m|h)\b/i.test(text);
     }) || null;
+  }
+
+  function findShopCardMetaRow(card) {
+    if (!(card instanceof Element)) {
+      return null;
+    }
+    const priceSpan = Array.from(card.querySelectorAll("span")).find((span) => span.querySelector("img[src*='money']"));
+    return priceSpan?.closest("div") instanceof HTMLElement ? priceSpan.closest("div") : null;
+  }
+
+  function upsertShopCardEtaSpan(card, text, title) {
+    if (!(card instanceof Element)) {
+      return null;
+    }
+    let hoursSpan = findShopCardEtaSpan(card);
+    const nextHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg> ${escapeHtml(text)}`;
+    if (!(hoursSpan instanceof HTMLElement)) {
+      const metaRow = findShopCardMetaRow(card);
+      const priceSpan = Array.from(metaRow?.children || []).find((node) => node instanceof HTMLElement && node.querySelector("img[src*='money']"));
+      if (!(metaRow instanceof HTMLElement)) {
+        return null;
+      }
+      withObserverSuppressed(() => {
+        hoursSpan = document.createElement("span");
+        hoursSpan.className = "flex items-center gap-1 font-bold text-ds-brown/70";
+        hoursSpan.innerHTML = nextHtml;
+        hoursSpan.title = title;
+        if (priceSpan instanceof HTMLElement) {
+          metaRow.insertBefore(hoursSpan, priceSpan);
+        } else {
+          metaRow.appendChild(hoursSpan);
+        }
+      });
+      return hoursSpan;
+    }
+    if (hoursSpan.innerHTML !== nextHtml || hoursSpan.title !== title || hoursSpan.className !== "flex items-center gap-1 font-bold text-ds-brown/70") {
+      withObserverSuppressed(() => {
+        hoursSpan.className = "flex items-center gap-1 font-bold text-ds-brown/70";
+        hoursSpan.innerHTML = nextHtml;
+        hoursSpan.title = title;
+      });
+    }
+    return hoursSpan;
   }
 
   function syncAllShopCardGoalControls(root = document) {
@@ -6715,14 +6772,7 @@
     let updatedCount = 0;
     cards.forEach((card) => {
       renderShopCardGoalControls(card);
-      const goldSpan = Array.from(card.querySelectorAll("span"))
-        .find((span) => /\d[\d,.]*\s*[kKmMbB]?/.test(span.textContent || "") && span.querySelector("img[src*='money']"));
-
-      if (!goldSpan) {
-        return;
-      }
-
-      const goldAmount = parseFloatSafe(goldSpan.textContent || "");
+      const goldAmount = getShopCardGoldAmount(card);
       if (!goldAmount || goldAmount <= 0) {
         return;
       }
@@ -6732,19 +6782,12 @@
         return;
       }
 
-      const hoursSpan = findShopCardEtaSpan(card);
       const remainingGold = Math.max(0, goldAmount - currentGold);
       const nextHoursText = remainingGold > 0
         ? `${formatHours(computedHours)} (~${formatHours(remainingGold / goldPerHour)} needed)`
         : formatHours(computedHours);
       const nextHoursTitle = `Calculated with ${goldPerHour.toFixed(2)} effective gold/hour`;
-      if (hoursSpan instanceof HTMLElement && (hoursSpan.textContent !== nextHoursText || hoursSpan.title !== nextHoursTitle)) {
-        withObserverSuppressed(() => {
-          hoursSpan.className = "flex items-center gap-1 font-bold text-ds-brown/70";
-          hoursSpan.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5 shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg> ${escapeHtml(nextHoursText)}`;
-          hoursSpan.title = nextHoursTitle;
-        });
-      }
+      upsertShopCardEtaSpan(card, nextHoursText, nextHoursTitle);
       updateShopCardIncludesRate(card, computedHours);
       updatedCount += 1;
     });
