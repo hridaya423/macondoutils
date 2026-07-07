@@ -25,6 +25,7 @@
   const HACKATIME_PROJECTS_CACHE_KEY = "macondo_utils_hackatime_projects";
   const PROJECT_RATE_CACHE_TTL_MS = 2 * 60 * 1000;
   const HACKATIME_PROJECTS_CACHE_TTL_MS = 30 * 60 * 1000;
+  const HACKATIME_PROJECTS_WINDOW_DAYS = 365;
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
@@ -1783,15 +1784,57 @@
     return baseGoldPerHour;
   }
 
+  function normalizeHackatimeProjectName(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function getHackatimeProjectKeys(value) {
+    const normalized = normalizeHackatimeProjectName(value);
+    if (!normalized) {
+      return [];
+    }
+    const compact = normalized.replace(/[\s_-]+/g, "");
+    return compact && compact !== normalized ? [normalized, compact] : [normalized];
+  }
+
+  function getLinkedHackatimeProjects(project) {
+    const arrays = [project?.hackatime_projects, project?.hackatimeProjects, project?.hackatime_project_names];
+    return arrays.find((linked) => Array.isArray(linked) && linked.length) || [];
+  }
+
+  function getLinkedHackatimeProjectName(linkedProject) {
+    if (typeof linkedProject === "string") {
+      return linkedProject;
+    }
+    return linkedProject?.name || linkedProject?.project || linkedProject?.project_name || "";
+  }
+
+  function getFirstFiniteNumber(source, keys) {
+    for (const key of keys) {
+      if (source?.[key] === null || source?.[key] === undefined || source?.[key] === "") {
+        continue;
+      }
+      const value = Number(source?.[key]);
+      if (Number.isFinite(value)) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  function getHackatimeProjectSeconds(project) {
+    return Math.max(0, getFirstFiniteNumber(project, ["total_seconds_in_window", "total_seconds", "seconds"]) || 0);
+  }
+
   function getProjectHoursFromHackatimeLinks(project, secondsByName, fallbackHours = 0) {
-    const linkedProjects = Array.isArray(project?.hackatime_projects) ? project.hackatime_projects : [];
+    const linkedProjects = getLinkedHackatimeProjects(project);
     let totalSeconds = 0;
-    linkedProjects.forEach((name) => {
-      const normalized = String(name || "").trim().toLowerCase();
-      if (!normalized) {
+    linkedProjects.forEach((linkedProject) => {
+      const keys = getHackatimeProjectKeys(getLinkedHackatimeProjectName(linkedProject));
+      if (!keys.length) {
         return;
       }
-      totalSeconds += Number(secondsByName?.get(normalized) || 0);
+      totalSeconds += Number(keys.map((key) => secondsByName?.get(key) || 0).find((seconds) => seconds > 0) || 0);
     });
     if (totalSeconds > 0) {
       return totalSeconds / 3600;
@@ -1805,12 +1848,11 @@
 
   function getEstimatedUnshippedHours(project, totalHours) {
     const currentHours = Number.isFinite(Number(totalHours)) && Number(totalHours) > 0 ? Number(totalHours) : 0;
-    const previousShippedHours = Number.isFinite(Number(project?.previousShippedHackatimeHours))
-      ? Math.max(0, Number(project.previousShippedHackatimeHours))
-      : 0;
-    const unshippedJournalHours = Number.isFinite(Number(project?.unshippedJournalHours))
-      ? Math.max(0, Number(project.unshippedJournalHours))
-      : 0;
+    const previousShippedHours = Math.max(0, getFirstFiniteNumber(project, ["previousShippedHackatimeHours", "previous_shipped_hackatime_hours"]) || 0);
+    const unshippedJournalHours = Math.max(0, getFirstFiniteNumber(project, ["unshippedJournalHours", "unshipped_journal_hours"]) || 0);
+    if (previousShippedHours > 0 && currentHours > 0 && currentHours < previousShippedHours) {
+      return currentHours + unshippedJournalHours;
+    }
     return Math.max(0, currentHours - previousShippedHours + unshippedJournalHours);
   }
 
@@ -1830,13 +1872,13 @@
     const fallbackTotalEarnedGold = Number.isFinite(Number(fallbackMeta?.totalEarnedGold))
       ? Math.max(0, Math.round(Number(fallbackMeta.totalEarnedGold)))
       : 0;
-    const goldPerHour = getProjectEffectiveGoldPerHour(project.level, { streakDays });
+    const goldPerHour = getProjectEffectiveGoldPerHour(level, { streakDays });
     const estimatedUnshippedHours = getEstimatedUnshippedHours(project, hours);
     const roundedHours = getRoundedHoursForEstCoins(estimatedUnshippedHours);
     const estCoins = roundedHours > 0 && goldPerHour
       ? Math.max(0, Math.round(roundedHours * goldPerHour))
-      : Math.max(0, Math.round(Number(fallbackMeta?.estCoins) || 0));
-    const futureCoins = Math.max(0, estCoins - fallbackTotalEarnedGold);
+      : Math.max(0, Math.round(Number(fallbackMeta?.futureCoins ?? fallbackMeta?.estCoins) || 0));
+    const futureCoins = estCoins;
 
     return {
       title,
@@ -2462,6 +2504,9 @@
       if (Date.now() - Number(parsed.timestamp || 0) > HACKATIME_PROJECTS_CACHE_TTL_MS) {
         return [];
       }
+      if (Number(parsed.windowDays || 0) !== HACKATIME_PROJECTS_WINDOW_DAYS) {
+        return [];
+      }
       const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
       return projects
         .map((project) => ({
@@ -2485,6 +2530,7 @@
       : [];
     localStorage.setItem(HACKATIME_PROJECTS_CACHE_KEY, JSON.stringify({
       timestamp: Date.now(),
+      windowDays: HACKATIME_PROJECTS_WINDOW_DAYS,
       projects: normalized
     }));
   }
@@ -4119,7 +4165,7 @@
   }
 
   async function fetchHackatimeProjects() {
-    const since = new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const since = new Date(Date.now() - HACKATIME_PROJECTS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     try {
       const response = await fetch(`/api/hackatime/projects?since=${since}`, {
         method: "GET",
@@ -4134,10 +4180,10 @@
       }
       const projects = data.projects
         .filter((project) => typeof project?.name === "string" && project.name.trim().length > 0)
-        .sort((a, b) => Number(b.total_seconds_in_window || 0) - Number(a.total_seconds_in_window || 0))
+        .sort((a, b) => getHackatimeProjectSeconds(b) - getHackatimeProjectSeconds(a))
         .map((project) => ({
           name: project.name.trim(),
-          seconds: Number(project.total_seconds_in_window || 0)
+          seconds: getHackatimeProjectSeconds(project)
         }))
         .filter((project) => Number.isFinite(project.seconds) && project.seconds > 0);
       writeHackatimeProjectsCache(projects);
@@ -4150,12 +4196,12 @@
   function buildHackatimeSecondsByName(projects) {
     const secondsByName = new Map();
     (Array.isArray(projects) ? projects : []).forEach((project) => {
-      const name = String(project?.name || "").trim().toLowerCase();
+      const keys = getHackatimeProjectKeys(project?.name);
       const seconds = Number(project?.seconds || 0);
-      if (!name || !Number.isFinite(seconds) || seconds <= 0) {
+      if (!keys.length || !Number.isFinite(seconds) || seconds <= 0) {
         return;
       }
-      secondsByName.set(name, seconds);
+      keys.forEach((key) => secondsByName.set(key, seconds));
     });
     return secondsByName;
   }
@@ -5682,6 +5728,7 @@
       restoreNativeWishlistIfNeeded();
       return;
     }
+    syncGoalsFromShopDom(modal);
     updateShopCardHours(modal);
     collapseShopFilterChips(modal);
     renderGoalsMiniBox();
@@ -5971,12 +6018,120 @@
     if (!candidate) {
       return null;
     }
-    return projectGoals.find((goal) => {
-      if (candidate.itemId && goal.itemId) {
-        return candidate.itemId === goal.itemId;
+    return projectGoals.find((goal) => goalMatchesCandidate(goal, candidate)) || null;
+  }
+
+  function goalMatchesCandidate(goal, candidate) {
+    if (!goal || !candidate) {
+      return false;
+    }
+    if (candidate.itemId && goal.itemId) {
+      return candidate.itemId === goal.itemId;
+    }
+    return goal.name.toLowerCase() === String(candidate.name || "").trim().toLowerCase();
+  }
+
+  function getGoalIndexForCandidate(goals, candidate) {
+    return (Array.isArray(goals) ? goals : []).findIndex((goal) => goalMatchesCandidate(goal, candidate));
+  }
+
+  function getNativeWishlistGoalCandidates(root) {
+    if (!(root instanceof HTMLElement)) {
+      return [];
+    }
+    return Array.from(root.querySelectorAll("[draggable='true']")).map((card) => {
+      if (!(card instanceof HTMLElement) || !card.querySelector("button[aria-label*='Remove from wishlist']")) {
+        return null;
       }
-      return goal.name.toLowerCase() === String(candidate.name || "").trim().toLowerCase();
-    }) || null;
+      const itemImg = Array.from(card.querySelectorAll("img[alt]")).find((img) => !String(img.getAttribute("src") || "").includes("/images/icons/money"));
+      const name = String(itemImg?.getAttribute("alt") || "").trim();
+      const unitGold = Math.max(0, getShopCardGoldAmount(card));
+      const quantityGroup = card.querySelector("button[aria-label*='Increase quantity']")?.parentElement;
+      const quantity = Math.max(1, Math.round(parseFloatSafe(quantityGroup?.textContent || "") || 1));
+      if (!name || unitGold <= 0) {
+        return null;
+      }
+      return {
+        itemId: null,
+        name,
+        unitGold,
+        quantity,
+        imageUrl: String(itemImg?.getAttribute("src") || "")
+      };
+    }).filter(Boolean);
+  }
+
+  function syncGoalsFromShopDom(root = document) {
+    const scope = root instanceof Element || root instanceof Document ? root : document;
+    const nextGoals = projectGoals.slice();
+    let changed = false;
+
+    function applyCandidate(candidate, shouldExist, syncQuantity = false) {
+      const normalized = normalizeGoal(candidate);
+      if (!normalized) {
+        return;
+      }
+      const index = getGoalIndexForCandidate(nextGoals, normalized);
+      if (!shouldExist) {
+        if (index >= 0) {
+          nextGoals.splice(index, 1);
+          changed = true;
+        }
+        return;
+      }
+      if (index < 0) {
+        nextGoals.push(normalized);
+        changed = true;
+        return;
+      }
+      const current = nextGoals[index];
+      const updated = {
+        ...current,
+        itemId: current.itemId || normalized.itemId,
+        name: normalized.name || current.name,
+        unitGold: normalized.unitGold,
+        quantity: syncQuantity ? normalized.quantity : current.quantity,
+        imageUrl: normalized.imageUrl || current.imageUrl
+      };
+      if (JSON.stringify(updated) !== JSON.stringify(current)) {
+        nextGoals[index] = updated;
+        changed = true;
+      }
+    }
+
+    scope.querySelectorAll(SHOP_CARD_SELECTOR).forEach((card) => {
+      const parsed = parseShopCard(findShopCardRoot(card));
+      if (!parsed) {
+        return;
+      }
+      const candidate = {
+        itemId: parsed.itemId,
+        name: parsed.name,
+        unitGold: parsed.unitGold,
+        quantity: 1,
+        imageUrl: parsed.imageUrl
+      };
+      const label = String(parsed.starButton.getAttribute("aria-label") || parsed.starButton.title || "").toLowerCase();
+      if (label.includes("unstar")) {
+        applyCandidate(candidate, true, false);
+      } else if (label.includes("star")) {
+        applyCandidate(candidate, false, false);
+      }
+    });
+
+    getNativeWishlistGoalCandidates(findNativeWishlistRoot()).forEach((candidate) => applyCandidate(candidate, true, true));
+
+    if (!changed) {
+      return false;
+    }
+    projectGoals = nextGoals;
+    writeGoalsCache(projectGoals);
+    const panel = document.querySelector(`#${PROJECT_LABEL_SETTINGS_ID} .mu-label-settings-panel`);
+    if (panel instanceof HTMLElement && !panel.hidden) {
+      renderGoalSettingsPanel(panel);
+    }
+    queueGoalsMiniRender();
+    return true;
   }
 
   function renderShopCardGoalControls(card) {
