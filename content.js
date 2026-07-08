@@ -25,7 +25,7 @@
   const HACKATIME_PROJECTS_CACHE_KEY = "macondo_utils_hackatime_projects";
   const PROJECT_RATE_CACHE_TTL_MS = 2 * 60 * 1000;
   const HACKATIME_PROJECTS_CACHE_TTL_MS = 30 * 60 * 1000;
-  const HACKATIME_PROJECTS_WINDOW_DAYS = 365;
+  const HACKATIME_PROJECTS_SINCE = "2026-04-15";
   const PROJECT_LABEL_META_REFRESH_MS = 60 * 1000;
   const PROJECT_GOALS_ORDER_SYNC_MS = 5 * 60 * 1000;
   const PROJECT_FETCH_LIMIT = 80;
@@ -2504,7 +2504,7 @@
       if (Date.now() - Number(parsed.timestamp || 0) > HACKATIME_PROJECTS_CACHE_TTL_MS) {
         return [];
       }
-      if (Number(parsed.windowDays || 0) !== HACKATIME_PROJECTS_WINDOW_DAYS) {
+      if (String(parsed.since || "") !== HACKATIME_PROJECTS_SINCE) {
         return [];
       }
       const projects = Array.isArray(parsed.projects) ? parsed.projects : [];
@@ -2530,7 +2530,7 @@
       : [];
     localStorage.setItem(HACKATIME_PROJECTS_CACHE_KEY, JSON.stringify({
       timestamp: Date.now(),
-      windowDays: HACKATIME_PROJECTS_WINDOW_DAYS,
+      since: HACKATIME_PROJECTS_SINCE,
       projects: normalized
     }));
   }
@@ -4165,7 +4165,7 @@
   }
 
   async function fetchHackatimeProjects() {
-    const since = new Date(Date.now() - HACKATIME_PROJECTS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const since = HACKATIME_PROJECTS_SINCE;
     try {
       const response = await fetch(`/api/hackatime/projects?since=${since}`, {
         method: "GET",
@@ -5729,6 +5729,7 @@
       return;
     }
     syncGoalsFromShopDom(modal);
+    ensureNativeWishlistViewModeControls(modal);
     updateShopCardHours(modal);
     collapseShopFilterChips(modal);
     renderGoalsMiniBox();
@@ -6039,6 +6040,13 @@
     if (!(root instanceof HTMLElement)) {
       return [];
     }
+    return getNativeWishlistGoalCards(root).map((entry) => entry.candidate);
+  }
+
+  function getNativeWishlistGoalCards(root) {
+    if (!(root instanceof HTMLElement)) {
+      return [];
+    }
     return Array.from(root.querySelectorAll("[draggable='true']")).map((card) => {
       if (!(card instanceof HTMLElement) || !card.querySelector("button[aria-label*='Remove from wishlist']")) {
         return null;
@@ -6052,13 +6060,73 @@
         return null;
       }
       return {
-        itemId: null,
-        name,
-        unitGold,
-        quantity,
-        imageUrl: String(itemImg?.getAttribute("src") || "")
+        card,
+        candidate: {
+          itemId: null,
+          name,
+          unitGold,
+          quantity,
+          imageUrl: String(itemImg?.getAttribute("src") || "")
+        }
       };
     }).filter(Boolean);
+  }
+
+  function getNativeWishlistProgressMode(progressModeGroup) {
+    if (!(progressModeGroup instanceof HTMLElement)) {
+      return goalsProgressMode;
+    }
+    const activeButton = Array.from(progressModeGroup.querySelectorAll("button")).find((button) => {
+      const className = String(button.getAttribute("class") || "");
+      return className.includes("bg-ds-brown") || className.includes("text-ds-cream");
+    });
+    const text = String(activeButton?.textContent || "").toLowerCase();
+    return text.includes("per item") ? "individual" : "cumulative";
+  }
+
+  function setNativeWishlistFill(fill, pct) {
+    if (!(fill instanceof HTMLElement)) {
+      return;
+    }
+    const bounded = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+    fill.style.width = `${bounded}%`;
+    fill.classList.toggle("bg-ds-success", bounded >= 100);
+    fill.classList.toggle("bg-ds-brown", bounded < 100);
+  }
+
+  function findNativeWishlistFill(root) {
+    if (!(root instanceof HTMLElement)) {
+      return null;
+    }
+    return Array.from(root.querySelectorAll("div[style*='width']")).find((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      return String(node.parentElement?.getAttribute("class") || "").includes("bg-ds-brown/15");
+    }) || null;
+  }
+
+  function updateNativeWishlistProgressBars(nativeWishlistRoot, summaryBox, progressModeGroup, displayGold, nativeTargetGold) {
+    if (!(nativeWishlistRoot instanceof HTMLElement)) {
+      return;
+    }
+    const mode = getNativeWishlistProgressMode(progressModeGroup);
+    let cumulativeTargetGold = 0;
+    withObserverSuppressed(() => {
+      getNativeWishlistGoalCards(nativeWishlistRoot).forEach(({ card, candidate }) => {
+        const targetGold = candidate.unitGold * candidate.quantity;
+        const cumulativeBeforeGold = cumulativeTargetGold;
+        cumulativeTargetGold += targetGold;
+        const availableForThisGold = Math.max(0, displayGold - cumulativeBeforeGold);
+        const progressGold = mode === "cumulative"
+          ? Math.max(0, Math.min(targetGold, availableForThisGold))
+          : Math.max(0, Math.min(targetGold, displayGold));
+        const pct = targetGold > 0 ? (progressGold / targetGold) * 100 : 0;
+        setNativeWishlistFill(findNativeWishlistFill(card), pct);
+      });
+      const totalPct = nativeTargetGold > 0 ? (Math.max(0, Math.min(displayGold, nativeTargetGold)) / nativeTargetGold) * 100 : 0;
+      setNativeWishlistFill(findNativeWishlistFill(summaryBox), totalPct);
+    });
   }
 
   function syncGoalsFromShopDom(root = document) {
@@ -6561,6 +6629,73 @@
     return `px-3 py-1.5 text-xs font-bold uppercase tracking-wide transition-colors ${isActive ? "bg-ds-brown text-ds-cream" : "text-ds-brown/70 hover:bg-ds-brown/10"}`;
   }
 
+  function findNativeWishlistProgressModeGroup(root = document) {
+    const scope = root instanceof Element || root instanceof Document ? root : document;
+    return Array.from(scope.querySelectorAll("div")).find((node) => {
+      if (!(node instanceof HTMLElement) || node.id === "macondo-utils-goals-native-view-mode") {
+        return false;
+      }
+      const directButtons = Array.from(node.children).filter((child) => child instanceof HTMLButtonElement);
+      if (directButtons.length !== 2) {
+        return false;
+      }
+      const text = directButtons.map((button) => String(button.textContent || "").trim().toLowerCase());
+      return text.includes("all together") && text.includes("per item");
+    }) || null;
+  }
+
+  function ensureNativeWishlistViewModeControls(root = document) {
+    const scope = root instanceof Element || root instanceof Document ? root : document;
+    const progressModeGroup = findNativeWishlistProgressModeGroup(scope);
+    const controlsRow = progressModeGroup?.parentElement instanceof HTMLElement ? progressModeGroup.parentElement : null;
+    if (!(controlsRow instanceof HTMLElement)) {
+      return null;
+    }
+
+    scope.querySelectorAll("#macondo-utils-goals-native-mode-wrap").forEach((wrap) => {
+      if (!(wrap instanceof HTMLElement) || !(wrap.parentElement instanceof HTMLElement)) {
+        wrap.remove();
+        return;
+      }
+      withObserverSuppressed(() => {
+        Array.from(wrap.children).forEach((child) => wrap.parentElement.insertBefore(child, wrap));
+        wrap.remove();
+      });
+    });
+
+    const groups = Array.from(scope.querySelectorAll("#macondo-utils-goals-native-view-mode")).filter((node) => node instanceof HTMLElement);
+    let viewModeGroup = groups[0] || null;
+    groups.slice(1).forEach((node) => node.remove());
+    const nextControlsMarkup = `
+        <button type='button' class='${getInjectedGoalsViewModeClass("actual")}' data-goals-mode='actual'>Actual</button>
+        <button type='button' class='${getInjectedGoalsViewModeClass("projected")}' data-goals-mode='projected'>Projected</button>
+      `;
+    if (!(viewModeGroup instanceof HTMLElement)) {
+      withObserverSuppressed(() => {
+        viewModeGroup = document.createElement("div");
+        viewModeGroup.id = "macondo-utils-goals-native-view-mode";
+        controlsRow.insertBefore(viewModeGroup, progressModeGroup);
+      });
+    } else if (viewModeGroup.parentElement !== controlsRow) {
+      withObserverSuppressed(() => {
+        controlsRow.insertBefore(viewModeGroup, progressModeGroup);
+      });
+    }
+    if (viewModeGroup instanceof HTMLElement && viewModeGroup.className !== "ml-auto flex items-center border-[2px] border-ds-brown/30") {
+      withObserverSuppressed(() => {
+        viewModeGroup.className = "ml-auto flex items-center border-[2px] border-ds-brown/30";
+      });
+    }
+    if (viewModeGroup instanceof HTMLElement && viewModeGroup.innerHTML !== nextControlsMarkup) {
+      withObserverSuppressed(() => {
+        viewModeGroup.innerHTML = nextControlsMarkup;
+      });
+    }
+    bindInjectedGoalsViewModeButtons(viewModeGroup);
+    updateInjectedGoalsViewModeState(viewModeGroup);
+    return progressModeGroup;
+  }
+
   function updateInjectedGoalsViewModeState(root = document) {
     const scope = root instanceof Element || root instanceof Document ? root : document;
     scope.querySelectorAll("#macondo-utils-goals-native-view-mode [data-goals-mode]").forEach((button) => {
@@ -6812,66 +6947,11 @@
       return;
     }
 
-    const progressModeGroup = Array.from(nativeWishlistRoot.querySelectorAll("div")).find((node) => {
-      if (!(node instanceof HTMLElement)) {
-        return false;
-      }
-      const directButtons = Array.from(node.children).filter((child) => child instanceof HTMLButtonElement);
-      if (directButtons.length !== 2) {
-        return false;
-      }
-      const text = directButtons.map((button) => String(button.textContent || "").trim().toLowerCase());
-      return text.includes("all together") && text.includes("per item");
-    }) || null;
-    const controlsRow = progressModeGroup?.parentElement instanceof HTMLElement ? progressModeGroup.parentElement : null;
+    const progressModeGroup = ensureNativeWishlistViewModeControls(getShopModalElement() || nativeWishlistRoot)
+      || findNativeWishlistProgressModeGroup(nativeWishlistRoot);
     const summaryBox = findNativeWishlistSummaryBox(nativeWishlistRoot);
     let nativePartsMissing = false;
-    if (controlsRow instanceof HTMLElement) {
-      let modeWrap = nativeWishlistRoot.querySelector("#macondo-utils-goals-native-mode-wrap");
-      let viewModeGroup = nativeWishlistRoot.querySelector("#macondo-utils-goals-native-view-mode");
-      const nextControlsMarkup = `
-        <button type='button' class='${getInjectedGoalsViewModeClass("actual")}' data-goals-mode='actual'>Actual</button>
-        <button type='button' class='${getInjectedGoalsViewModeClass("projected")}' data-goals-mode='projected'>Projected</button>
-      `;
-      if (!(modeWrap instanceof HTMLElement)) {
-        withObserverSuppressed(() => {
-          modeWrap = document.createElement("div");
-          modeWrap.id = "macondo-utils-goals-native-mode-wrap";
-          modeWrap.className = "ml-auto flex items-center gap-2 flex-wrap";
-          if (progressModeGroup instanceof HTMLElement) {
-            controlsRow.appendChild(modeWrap);
-            modeWrap.appendChild(progressModeGroup);
-          } else {
-            controlsRow.appendChild(modeWrap);
-          }
-        });
-      } else if (progressModeGroup instanceof HTMLElement && progressModeGroup.parentElement !== modeWrap) {
-        withObserverSuppressed(() => {
-          modeWrap.appendChild(progressModeGroup);
-        });
-      }
-      if (!(viewModeGroup instanceof HTMLElement)) {
-        withObserverSuppressed(() => {
-          viewModeGroup = document.createElement("div");
-          viewModeGroup.id = "macondo-utils-goals-native-view-mode";
-          viewModeGroup.className = "flex items-center border-[2px] border-ds-brown/30";
-          if (modeWrap instanceof HTMLElement) {
-            modeWrap.insertBefore(viewModeGroup, modeWrap.firstChild || null);
-          }
-        });
-      } else if (modeWrap instanceof HTMLElement && viewModeGroup.parentElement !== modeWrap) {
-        withObserverSuppressed(() => {
-          modeWrap.insertBefore(viewModeGroup, modeWrap.firstChild || null);
-        });
-      }
-      if (viewModeGroup instanceof HTMLElement && viewModeGroup.innerHTML !== nextControlsMarkup) {
-        withObserverSuppressed(() => {
-          viewModeGroup.innerHTML = nextControlsMarkup;
-        });
-      }
-      bindInjectedGoalsViewModeButtons(viewModeGroup);
-      updateInjectedGoalsViewModeState(viewModeGroup);
-    } else {
+    if (!(progressModeGroup instanceof HTMLElement)) {
       nativePartsMissing = true;
     }
 
@@ -6882,6 +6962,7 @@
       const nativeProgressGold = Math.max(0, displayGold);
       const nativeRemainingGold = Math.max(0, nativeTargetGold - nativeProgressGold);
       const nativeEta = formatEtaHours(rate > 0 ? nativeRemainingGold / rate : 0);
+      updateNativeWishlistProgressBars(nativeWishlistRoot, summaryBox, progressModeGroup, displayGold, nativeTargetGold);
       const statsMarkup = `
         <div class='grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] font-bold text-ds-brown/65'>
           ${projectLabelPrefs.showHudGoalsStat !== false ? `<div>Goals: ${nativeGoalCount}</div>` : ""}
