@@ -1798,7 +1798,15 @@
   }
 
   function getLinkedHackatimeProjects(project) {
-    const arrays = [project?.hackatime_projects, project?.hackatimeProjects, project?.hackatime_project_names];
+    const arrays = [
+      project?.hackatime_projects,
+      project?.hackatimeProjects,
+      project?.hackatime_project_names,
+      project?.linked_hackatime_projects,
+      project?.linkedHackatimeProjects,
+      project?.hackatime_project_links,
+      project?.hackatimeProjectLinks,
+    ];
     return arrays.find((linked) => Array.isArray(linked) && linked.length) || [];
   }
 
@@ -1806,7 +1814,14 @@
     if (typeof linkedProject === "string") {
       return linkedProject;
     }
-    return linkedProject?.name || linkedProject?.project || linkedProject?.project_name || "";
+    return linkedProject?.name
+      || linkedProject?.project
+      || linkedProject?.project_name
+      || linkedProject?.projectName
+      || linkedProject?.title
+      || linkedProject?.label
+      || linkedProject?.hackatime_project_name
+      || "";
   }
 
   function getFirstFiniteNumber(source, keys) {
@@ -1826,10 +1841,25 @@
     return Math.max(0, getFirstFiniteNumber(project, ["total_seconds_in_window", "total_seconds", "seconds"]) || 0);
   }
 
+  function getHackatimeProjectHoursValue(project) {
+    return Math.max(0, getFirstFiniteNumber(project, ["hours", "total_hours", "cumulative_hours"]) || 0);
+  }
+
   function getProjectHoursFromHackatimeLinks(project, secondsByName, fallbackHours = 0) {
     const linkedProjects = getLinkedHackatimeProjects(project);
     let totalSeconds = 0;
+    let totalHours = 0;
     linkedProjects.forEach((linkedProject) => {
+      const directSeconds = getHackatimeProjectSeconds(linkedProject);
+      if (directSeconds > 0) {
+        totalSeconds += directSeconds;
+        return;
+      }
+      const directHours = getHackatimeProjectHoursValue(linkedProject);
+      if (directHours > 0) {
+        totalHours += directHours;
+        return;
+      }
       const keys = getHackatimeProjectKeys(getLinkedHackatimeProjectName(linkedProject));
       if (!keys.length) {
         return;
@@ -1837,7 +1867,10 @@
       totalSeconds += Number(keys.map((key) => secondsByName?.get(key) || 0).find((seconds) => seconds > 0) || 0);
     });
     if (totalSeconds > 0) {
-      return totalSeconds / 3600;
+      return totalSeconds / 3600 + totalHours;
+    }
+    if (totalHours > 0) {
+      return totalHours;
     }
     return Number.isFinite(Number(fallbackHours)) && Number(fallbackHours) > 0 ? Number(fallbackHours) : 0;
   }
